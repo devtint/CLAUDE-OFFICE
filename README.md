@@ -27,9 +27,35 @@ Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packag
 
 <img src="docs/office.png" width="300" alt="The office in a narrow side panel">
 
+## Let Claude set it up
+
+Paste this into Claude Code (the terminal, the desktop app or an IDE) and it does the install for you:
+
+```text
+Please install Claude Office for me from https://github.com/devtint/CLAUDE-OFFICE
+
+1. Check that Python 3.8 or newer and git are installed. If one is missing, tell me how to
+   install it for my operating system and stop.
+2. Clone the repository into my Claude Code skills folder:
+   ~/.claude/skills/claude-office (on Windows: %USERPROFILE%\.claude\skills\claude-office).
+   If that folder already exists, run "git pull" in it instead.
+3. Read README.md and install.py before running anything, and tell me in one or two lines
+   what they do.
+4. Run install.py with Python from that folder to make the "Claude Office" and
+   "Claude Office Off" desktop shortcuts.
+5. Start the office with "open-office.pyw --server" and check that
+   http://127.0.0.1:7788/state answers. If you are in the Claude desktop app, open
+   http://127.0.0.1:7788 in the built-in browser panel.
+6. Tell me how to open and stop it, and that from now on I can just say "start the office"
+   or "stop the office".
+```
+
+Claude may ask for your OK before running commands. The office only reads your local session
+files and never sends anything anywhere.
+
 ## Install
 
-Clone it into your Claude Code skills folder, so Claude can open it for you too:
+Or do it yourself. Clone it into your Claude Code skills folder, so Claude can open it for you too:
 
 ```bash
 git clone https://github.com/devtint/CLAUDE-OFFICE ~/.claude/skills/claude-office
