@@ -1,0 +1,5 @@
+# per-user files the office writes next to itself
+office-error.log
+__pycache__/
+*.pyc
+.DS_Store

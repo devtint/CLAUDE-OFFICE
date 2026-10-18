@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Pet</title>
+<style>
+  :root {
+    --bg: #1f1e1d; --panel: #282624; --text: #f0eee6; --muted: #a39e93; --faint: #6f6a62;
+    --line: #3d3a36; --amber: #e0a43a; --red: #e5484d; --sky1: #1c252d; --sky2: #25303a;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #faf9f5; --panel: #f0eee6; --text: #1f1e1d; --muted: #6f6a62; --faint: #a39e93;
+      --line: #e3e0d6; --sky1: #e8eef2; --sky2: #f3f0e8;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 13px/1.4 system-ui, "Segoe UI", sans-serif; }
+  body { padding: 10px; }
+  #stage { width: 100%; height: 96px; display: block; border-radius: 10px;
+    background: linear-gradient(var(--sky1), var(--sky2)); border: 1px solid var(--line); cursor: pointer; }
+  #list { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .row { display: grid; grid-template-columns: 10px 1fr auto; gap: 8px; align-items: baseline;
+    padding: 6px 8px; border-radius: 8px; background: var(--panel); }
+  .row.helper { margin-left: 16px; }
+  .dot { width: 8px; height: 8px; border-radius: 2px; transform: translateY(1px); }
+  .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .name span { font-weight: 400; color: var(--muted); }
+  .step { grid-column: 2 / 4; color: var(--muted); font-size: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .state { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .state.working { color: var(--text); }
+  .state.waiting, .state.error { color: var(--amber); }
+  .empty { color: var(--faint); text-align: center; padding: 10px; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="list"><div class="empty">Looking for Claude sessions...</div></div>
+<script>
+const PX = 3, BODY = [
+  '..##########..', '..##E####E##..', '..##E####E##..', '##############',
+  '##############', '..##########..', '..##########..'];
+const LEGS = [['..#.#....#.#..', '..#.#....#.#..'], ['...#.#..#.#...', '...#.#..#.#...']];
+const LINES = ['Hi! I am Claude.', 'Time for a stretch?', 'Drink some water.',
+  'Hehe, that tickles!', 'Thanks for the pat!'];
+const canvas = document.getElementById('stage'), ctx = canvas.getContext('2d');
+const list = document.getElementById('list');
+let critters = new Map(), data = [], tick = 0, hearts = [];
+
+function resize() {
+  const r = window.devicePixelRatio || 1;
+  canvas.width = canvas.clientWidth * r; canvas.height = canvas.clientHeight * r;
+  ctx.setTransform(r, 0, 0, r, 0, 0);
+}
+window.addEventListener('resize', resize); resize();
+
+function sprite(x, y, colour, leg, eyes, px) {
+  const rows = BODY.concat(LEGS[leg]);
+  rows.forEach((row, j) => [...row].forEach((c, i) => {
+    if (c === '.') return;
+    ctx.fillStyle = c === 'E' ? (eyes ? '#2b1d16' : colour) : colour;
+    ctx.fillRect(x + i * px, y + j * px, px, px);
+  }));
+}
+
+function sync(claudes) {
+  const w = canvas.clientWidth, seen = new Set();
+  claudes.forEach((c, i) => {
+    seen.add(c.id);
+    let cr = critters.get(c.id);
+    if (!cr) {
+      cr = { x: 20 + Math.random() * Math.max(10, w - 60), dir: Math.random() < .5 ? -1 : 1,
+             hop: 0, say: '', sayT: 0 };
+      critters.set(c.id, cr);
+    }
+    if (cr.state && cr.state !== c.state && c.state === 'done') { cr.hop = 14; cr.say = 'Done!'; cr.sayT = 80; }
+    if (cr.state !== c.state && c.state === 'waiting') { cr.hop = 10; cr.say = '!'; cr.sayT = 120; }
+    Object.assign(cr, { info: c });
+    cr.state = c.state;
+  });
+  for (const id of critters.keys()) if (!seen.has(id)) critters.delete(id);
+}
+
+function draw() {
+  tick++;
+  const w = canvas.clientWidth, h = canvas.clientHeight, floor = h - 10;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--line');
+  ctx.fillRect(0, floor, w, 1);
+  if (!critters.size) {
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--faint');
+    ctx.font = '12px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('No active sessions', w / 2, h / 2);
+  }
+  for (const cr of critters.values()) {
+    const c = cr.info, px = c.parent ? 2 : PX, sw = 14 * px, sh = 9 * px;
+    const speed = { working: 1.4, thinking: 0, waiting: 0, done: .3, error: .6, off: 0 }[c.state] ?? .3;
+    cr.x += cr.dir * speed;
+    if (cr.x < 4) { cr.x = 4; cr.dir = 1; }
+    if (cr.x > w - sw - 4) { cr.x = w - sw - 4; cr.dir = -1; }
+    if (speed && Math.random() < .004) cr.dir *= -1;
+    if (cr.hop > 0) cr.hop -= 1;
+    const lift = cr.hop > 0 ? Math.sin(cr.hop / 14 * Math.PI) * 10 : 0;
+    const bob = c.state === 'thinking' ? Math.sin(tick / 10) * 1.5 : 0;
+    const y = floor - sh - lift + bob;
+    const leg = speed ? Math.floor(tick / 8) % 2 : 0;
+    const blink = c.state !== 'off' && tick % 180 > 4;
+    ctx.globalAlpha = c.state === 'off' ? .5 : 1;
+    sprite(cr.x, y, c.colour, leg, blink, px);
+    ctx.globalAlpha = 1;
+    cr.box = [cr.x, y, sw, sh];
+    if (c.state === 'off' && tick % 60 < 40) {
+      ctx.fillStyle = '#a39e93'; ctx.font = '10px system-ui'; ctx.textAlign = 'left';
+      ctx.fillText('z', cr.x + sw, y - 2);
+    }
+    if (c.state === 'thinking') {
+      ctx.fillStyle = '#a39e93';
+      for (let k = 0; k < 3; k++) if ((tick / 15 | 0) % 4 > k) ctx.fillRect(cr.x + sw / 2 - 6 + k * 5, y - 6, 2, 2);
+    }
+    if (cr.sayT > 0) {
+      cr.sayT--;
+      ctx.font = '11px system-ui'; ctx.textAlign = 'center';
+      const tw = ctx.measureText(cr.say).width + 10, bx = Math.min(Math.max(cr.x + sw / 2, tw / 2 + 2), w - tw / 2 - 2);
+      ctx.fillStyle = '#f0eee6'; ctx.fillRect(bx - tw / 2, y - 22, tw, 16);
+      ctx.fillStyle = '#1f1e1d'; ctx.fillText(cr.say, bx, y - 10);
+    }
+  }
+  hearts = hearts.filter(p => (p.y -= .6, p.t--, p.t > 0));
+  ctx.fillStyle = '#e5484d'; ctx.font = '11px system-ui'; ctx.textAlign = 'center';
+  hearts.forEach(p => { ctx.globalAlpha = p.t / 40; ctx.fillText('♥', p.x, p.y); });
+  ctx.globalAlpha = 1;
+  requestAnimationFrame(draw);
+}
+
+canvas.addEventListener('click', e => {
+  const r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  for (const cr of critters.values()) {
+    const [bx, by, bw, bh] = cr.box || [];
+    if (x >= bx - 4 && x <= bx + bw + 4 && y >= by - 6 && y <= by + bh + 4) {
+      cr.hop = 14; cr.say = LINES[Math.random() * LINES.length | 0]; cr.sayT = 90;
+      for (let k = 0; k < 4; k++) hearts.push({ x: bx + bw / 2 + (k - 1.5) * 6, y: by - 4 - k * 3, t: 40 });
+      break;
+    }
+  }
+});
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]); }
+
+function render(claudes) {
+  if (!claudes.length) { list.innerHTML = '<div class="empty">No Claude sessions active in the last 30 minutes.</div>'; return; }
+  const order = [];
+  claudes.filter(c => !c.parent).forEach(m => {
+    order.push(m); claudes.filter(c => c.parent === m.id).forEach(hp => order.push(hp));
+  });
+  list.innerHTML = order.map(c => {
+    const sub = c.parent ? (c.desc || '') : c.project;
+    const word = c.word + (c.turn ? ' ' + c.turn : '');
+    const step = c.state === 'working' && c.doing ? (c.step || c.doing) : (c.step || '');
+    return `<div class="row${c.parent ? ' helper' : ''}" title="${esc(c.context ? 'Context ' + c.context : '')}">
+      <div class="dot" style="background:${esc(c.colour)}"></div>
+      <div class="name">${esc(c.name)} <span>${esc(sub)}</span></div>
+      <div class="state ${esc(c.state)}">${esc(word)}</div>
+      ${step ? `<div class="step">${esc(step)}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+async function poll() {
+  try {
+    const r = await fetch('/state', { cache: 'no-store' });
+    const d = await r.json();
+    sync(d.claudes); render(d.claudes);
+  } catch (e) {
+    list.innerHTML = '<div class="empty">The pet server stopped. Ask Claude to start the Claude office.</div>';
+  }
+  setTimeout(poll, 1500);
+}
+poll(); draw();
+</script>
+</body>
+</html>

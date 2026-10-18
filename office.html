@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Office</title>
+<style>
+  :root { --bg: #1f1e1d; --text: #f0eee6; --faint: #6f6a62; }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) { --bg: #faf9f5; --text: #1f1e1d; --faint: #a39e93; }
+  }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 13px/1.4 system-ui, "Segoe UI", sans-serif; }
+  body { padding: 8px; }
+  canvas { display: block; width: 100%; cursor: default; }
+  #tip { position: fixed; pointer-events: none; display: none; background: #2b2926; color: #f0eee6;
+    border: 1px solid #3d3a36; border-radius: 6px; padding: 4px 8px; font-size: 12px; max-width: 260px; }
+</style>
+</head>
+<body>
+<canvas id="office"></canvas>
+<div id="tip"></div>
+<script>
+// One room per active Claude Code session. Each room furnishes itself with the stations for the
+// tools that session has used, and gets more computers the busier it is. Claude walks to the
+// station for the tool it is running now; helpers (subagents) work in their session's room.
+const canvas = document.getElementById('office'), ctx = canvas.getContext('2d');
+const tip = document.getElementById('tip');
+const ROOM_H = 156, WALL = 64, BACK = 94, FEET = 124, BAR = 134, GAP = 8, ROW2 = 62;
+// furniture that goes in the front row when a room has one
+const FRONT = ['desk2', 'desk3', 'desk4', 'huddle', 'globe', 'mail', 'easel', 'couch', 'plant'];
+const BODY = ['..##########..', '..##E####E##..', '..##E####E##..', '##############',
+  '##############', '..##########..', '..##########..'];
+const LEGS = [['..#.#....#.#..', '..#.#....#.#..'], ['...#.#..#.#...', '...#.#..#.#...']];
+const PATS = ['Hi! I am Claude.', 'Back to work!', 'Hehe, that tickles!', 'Thanks for the pat!',
+  'Time for a stretch?', 'Drink some water.'];
+const LABELS = { desk: 'Code desk', desk2: 'Desk 2', desk3: 'Desk 3', desk4: 'Desk 4', terminal: 'Terminal',
+  browser: 'Browser', shelf: 'Bookshelf (reading files)', search: 'Search cabinet', globe: 'Web globe',
+  calendar: 'Calendar', mail: 'Mailbox', easel: 'Design easel', rack: 'Tool rack (MCP, skills)',
+  huddle: 'Helper huddle', board: 'Whiteboard (thinking, planning)', coffee: 'Coffee (done)',
+  couch: 'Couch (idle)', plant: 'Plant' };
+const WIDTH = { desk: 44, desk2: 44, desk3: 44, desk4: 44, terminal: 40, browser: 48, shelf: 34,
+  search: 28, globe: 28, calendar: 26, mail: 24, easel: 30, rack: 24, huddle: 38, board: 48,
+  coffee: 28, couch: 42, plant: 22 };
+const ORDER = ['desk', 'desk2', 'desk3', 'desk4', 'terminal', 'browser', 'shelf', 'search', 'globe',
+  'calendar', 'mail', 'easel', 'rack', 'huddle', 'board', 'coffee', 'couch', 'plant'];
+const KIND_STATION = { Commands: 'terminal', Edits: 'desk', Reads: 'shelf', Searches: 'search',
+  Web: 'globe', Helpers: 'huddle', Browser: 'browser', Other: 'rack' };
+
+// each room is laid out MIN_W wide, then the whole office is scaled up or down to fill the panel;
+// a wide panel puts rooms side by side
+const MIN_W = 360, COL_CSS = 560, MAX_S = 2.5;
+let COLS = 1, last = null;
+let rooms = new Map(), order = [], t = 0, hearts = [], W = 300, S = 1, H = 70;
+
+function stationFor(name) {
+  if (!name) return null;
+  if (/^(Bash|PowerShell|Monitor)$/.test(name)) return 'terminal';
+  if (/^(Edit|Write|NotebookEdit)$/.test(name)) return 'desk';
+  if (name === 'Read') return 'shelf';
+  if (/^(Grep|Glob)$/.test(name)) return 'search';
+  if (/^Web(Search|Fetch)$/.test(name)) return 'globe';
+  if (/Browser|chrome|computer-use/.test(name)) return 'browser';
+  if (/^(Agent|Task|SendMessage)$/.test(name) || /start_session|send_message/.test(name)) return 'huddle';
+  if (/^(Artifact|ArtifactData|ArtifactComments)$/.test(name) || /show_widget|visualize|design/i.test(name)) return 'easel';
+  if (/update_plan|wrap_up|mark_chapter|EnterPlanMode|ExitPlanMode|AskUserQuestion/.test(name)) return 'board';
+  if (/event|calendar|suggest_time/i.test(name)) return 'calendar';
+  if (/mail|draft|thread|label|forward|reply/i.test(name)) return 'mail';
+  if (/spreadsheet|_doc|file|presentation|values/i.test(name)) return 'shelf';
+  return 'rack';
+}
+
+// where a Claude goes for its state
+function goal(c, room) {
+  switch (c.state) {
+    case 'working': return stationFor(c.tool) || 'desk';
+    case 'thinking': return 'board';
+    case 'waiting': return 'door';
+    case 'done': return 'coffee';
+    case 'off': return !room.has || room.has.couch ? 'couch' : 'coffee';  // has is unset while furnishing
+    case 'error': return stationFor(c.tool) || 'terminal';
+  }
+  return 'desk';
+}
+
+// ---------- drawing helpers ----------
+function R(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h); }
+function txt(s, x, y, c, size = 11, align = 'left', weight = '') {
+  ctx.fillStyle = c; ctx.font = `${weight} ${size}px system-ui, Segoe UI, sans-serif`;
+  ctx.textAlign = align; ctx.fillText(s, x, y);
+}
+function fit(s, w) {
+  if (ctx.measureText(s).width <= w) return s;
+  while (s.length > 1 && ctx.measureText(s + '...').width > w) s = s.slice(0, -1);
+  return s + '...';
+}
+function table(x, b, w) {
+  R(x, b - 18, w, 4, '#9b6b45'); R(x, b - 14, w, 1, '#6e4a30');
+  R(x + 2, b - 14, 3, 14, '#6e4a30'); R(x + w - 5, b - 14, 3, 14, '#6e4a30');
+}
+function monitor(x, y, w, h, screen) {
+  R(x, y, w, h, '#15171a'); R(x + 2, y + 2, w - 4, h - 4, screen);
+  R(x + w / 2 - 2, y + h, 4, 4, '#15171a'); R(x + w / 2 - 6, y + h + 4, 12, 2, '#15171a');
+}
+const CODE = ['#c678dd', '#61afef', '#98c379', '#e5c07b', '#e06c75'];
+
+const DRAW = {
+  desk(x, b, on, ry, n) {
+    table(x, b, 44); monitor(x + 10, b - 40, 24, 16, on ? '#1e2a38' : '#23272c');
+    if (on) for (let i = 0; i < 4; i++) {
+      const w = 4 + ((i * 7 + (t >> 4) + n) % 11);
+      R(x + 13 + (i % 2) * 3, b - 37 + i * 3, Math.min(w, 17 - (i % 2) * 3), 1, CODE[(i + n) % 5]);
+    }
+    R(x + 14, b - 20, 16, 2, '#4b4f56'); R(x + 37, b - 24, 4, 6, '#e8e4dc'); R(x + 41, b - 22, 1, 2, '#e8e4dc');
+  },
+  terminal(x, b, on) {
+    table(x, b, 40); monitor(x + 8, b - 40, 24, 16, '#0b0f0b');
+    const g = on ? '#3fb950' : '#1f4d29';
+    for (let i = 0; i < 3; i++) R(x + 11, b - 37 + i * 3, 4 + ((i * 5 + (on ? t >> 3 : 0)) % 12), 1, g);
+    if (on && (t >> 4) % 2) R(x + 11, b - 28, 3, 2, g);
+    R(x + 12, b - 20, 16, 2, '#4b4f56');
+  },
+  browser(x, b, on) {
+    table(x, b, 48); monitor(x + 6, b - 44, 36, 20, on ? '#eef1f5' : '#34383e');
+    R(x + 8, b - 42, 32, 3, on ? '#c9ced6' : '#2a2d32');
+    if (on) {
+      R(x + 9, b - 41, 1, 1, '#e5484d'); R(x + 11, b - 41, 1, 1, '#e0a43a'); R(x + 13, b - 41, 1, 1, '#3fb950');
+      R(x + 10, b - 37, 12, 2, '#6A9BCC'); R(x + 10, b - 34, 26, 1, '#9aa3ad'); R(x + 10, b - 32, 20, 1, '#9aa3ad');
+      R(x + 10 + ((t >> 3) % 20), b - 30, 2, 2, '#1f1e1d');
+    }
+    R(x + 16, b - 20, 16, 2, '#4b4f56');
+  },
+  shelf(x, b, on) {
+    R(x, b - 54, 34, 54, '#7a5235'); R(x + 2, b - 52, 30, 50, '#4e3423');
+    const cols = ['#c0504d', '#4f81bd', '#9bbb59', '#e0a43a', '#8064a2', '#d97757'];
+    [b - 38, b - 21, b - 4].forEach((rb, s) => {
+      for (let i = 0; i < 7; i++) {
+        if (on && s === 1 && i === ((t >> 5) % 7)) continue;  // a book taken out to read
+        const h = 9 + ((i * 3 + s * 5) % 5);
+        R(x + 3 + i * 4, rb - h, 3, h, cols[(i + s * 2) % cols.length]);
+      }
+      R(x + 2, rb, 30, 2, '#7a5235');
+    });
+  },
+  search(x, b, on) {
+    R(x, b - 36, 28, 36, '#6b7280');
+    for (let i = 0; i < 3; i++) {
+      const out = on && i === ((t >> 5) % 3) ? 3 : 0;
+      R(x + 2 - out, b - 34 + i * 12, 24 + out, 10, '#7d8591'); R(x + 11 - out, b - 30 + i * 12, 6, 2, '#c0c4cc');
+    }
+    const wob = on ? Math.sin(t / 6) * 3 : 0;
+    ctx.strokeStyle = '#e8e4dc'; ctx.lineWidth = 2; ctx.beginPath();
+    ctx.arc(x + 14 + wob, b - 46, 5, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x + 18 + wob, b - 42); ctx.lineTo(x + 22 + wob, b - 38); ctx.stroke();
+  },
+  globe(x, b, on) {
+    R(x + 13, b - 12, 3, 12, '#7a5235'); R(x + 6, b - 3, 16, 3, '#7a5235');
+    ctx.save(); ctx.beginPath(); ctx.arc(x + 14, b - 23, 10, 0, Math.PI * 2); ctx.fillStyle = '#3b82c4'; ctx.fill();
+    ctx.clip();
+    const off = (t * (on ? 0.4 : 0.04)) % 30;
+    for (let k = -1; k < 2; k++) {
+      const gx = x + 4 + k * 30 + off;
+      R(gx, b - 30, 8, 5, '#5fa35f'); R(gx + 12, b - 24, 6, 8, '#5fa35f'); R(gx + 4, b - 20, 5, 4, '#5fa35f');
+    }
+    ctx.restore();
+    ctx.strokeStyle = '#c9a26b'; ctx.lineWidth = 1; ctx.beginPath();
+    ctx.arc(x + 14, b - 23, 12, Math.PI * 0.75, Math.PI * 2.25); ctx.stroke();
+  },
+  calendar(x, b, on, ry) {
+    const y = ry + 28;
+    R(x + 2, y, 22, 26, '#f5f3ee'); R(x + 2, y, 22, 6, '#d64545');
+    R(x + 7, y - 2, 2, 4, '#555'); R(x + 17, y - 2, 2, 4, '#555');
+    for (let r = 0; r < 4; r++) for (let c = 0; c < 5; c++) {
+      const hit = on && r * 5 + c === ((t >> 4) % 20);
+      R(x + 4 + c * 4, y + 8 + r * 4, 3, 3, hit ? '#d97757' : '#cfcac0');
+    }
+  },
+  mail(x, b, on) {
+    R(x + 10, b - 20, 3, 20, '#555'); R(x + 2, b - 32, 20, 12, '#3b6fb6'); R(x + 2, b - 32, 20, 3, '#2f5c99');
+    R(x + 20, on ? b - 40 : b - 32, 2, 8, on ? '#e5484d' : '#8a8a8a');
+    if (on) { const k = (t >> 2) % 20; R(x + 6 - k * 0.3, b - 36 - k * 0.6, 8, 5, '#f5f3ee'); }
+  },
+  easel(x, b, on) {
+    ctx.strokeStyle = '#8a5a3c'; ctx.lineWidth = 2; ctx.beginPath();
+    ctx.moveTo(x + 15, b - 50); ctx.lineTo(x + 5, b); ctx.moveTo(x + 15, b - 50); ctx.lineTo(x + 25, b);
+    ctx.stroke();
+    R(x + 3, b - 46, 24, 22, '#f5f3ee');
+    const k = on ? (t >> 3) % 4 : 3;
+    R(x + 6, b - 42, 8, 6, '#D97757'); if (k > 0) R(x + 15, b - 40, 9, 4, '#6A9BCC');
+    if (k > 1) R(x + 6, b - 33, 18, 2, '#9aa3ad'); if (k > 2) R(x + 6, b - 30, 12, 2, '#9aa3ad');
+    R(x + 2, b - 24, 26, 2, '#8a5a3c');
+  },
+  rack(x, b, on) {
+    R(x, b - 58, 24, 58, '#1b1d22'); R(x + 1, b - 57, 22, 56, '#24272e');
+    for (let i = 0; i < 7; i++) {
+      R(x + 3, b - 54 + i * 8, 18, 6, '#2e323a');
+      const lit = on ? ((i * 7 + (t >> 2)) % 5) > 1 : i % 3 === 0;
+      R(x + 5, b - 52 + i * 8, 2, 2, lit ? '#3fb950' : '#1f3a26');
+      R(x + 9, b - 52 + i * 8, 2, 2, lit && i % 2 ? '#e0a43a' : '#3a3220');
+    }
+  },
+  huddle(x, b, on) {
+    R(x + 1, b - 9, 6, 2, '#6a4ca8'); R(x + 2, b - 7, 2, 7, '#444'); R(x + 31, b - 9, 6, 2, '#6a4ca8'); R(x + 34, b - 7, 2, 7, '#444');
+    ctx.fillStyle = '#9b6b45'; ctx.beginPath(); ctx.ellipse(x + 19, b - 16, 14, 4, 0, 0, Math.PI * 2); ctx.fill();
+    R(x + 17, b - 14, 4, 14, '#6e4a30'); R(x + 12, b - 1, 14, 1, '#6e4a30');
+    if (on) R(x + 14 + ((t >> 4) % 3) * 3, b - 19, 6, 2, '#f5f3ee');
+  },
+  board(x, b, on, ry) {
+    const y = ry + 24;
+    R(x, y, 48, 34, '#9aa0a8'); R(x + 2, y + 2, 44, 30, '#f7f6f2');
+    const cols = ['#4f81bd', '#c0504d', '#3f9b5a'], n = on ? (t >> 3) % 40 : 40;
+    for (let i = 0; i < 4; i++) R(x + 6, y + 6 + i * 6, Math.max(0, Math.min(30 - i * 5, n - i * 8)), 2, cols[i % 3]);
+    if (n > 30) { ctx.strokeStyle = '#c0504d'; ctx.lineWidth = 1; ctx.strokeRect(x + 34, y + 18, 8, 8); }
+    R(x + 8, y + 34, 32, 2, '#7d838b');
+  },
+  coffee(x, b, on) {
+    R(x, b - 22, 28, 22, '#5c5f66'); R(x, b - 24, 28, 3, '#8a8d94');
+    R(x + 7, b - 40, 14, 16, '#2b2b2b'); R(x + 9, b - 38, 10, 4, '#444'); R(x + 12, b - 29, 5, 4, '#e8e4dc');
+    if (on) for (let i = 0; i < 2; i++) {
+      const k = (t + i * 20) % 40; R(x + 13 + i * 2 + Math.sin(k / 5) * 2, b - 30 - k / 2, 1, 2, `rgba(255,255,255,${0.5 - k / 80})`);
+    }
+  },
+  couch(x, b, on) {
+    R(x, b - 24, 42, 9, '#6a4ca8'); R(x, b - 16, 42, 10, '#7c5cbf');
+    R(x - 1, b - 20, 5, 14, '#5b3f94'); R(x + 38, b - 20, 5, 14, '#5b3f94');
+    R(x + 3, b - 6, 3, 6, '#3a2a5e'); R(x + 36, b - 6, 3, 6, '#3a2a5e');
+  },
+  plant(x, b) {
+    R(x + 5, b - 12, 12, 12, '#b5651d'); R(x + 4, b - 13, 14, 2, '#c97a35');
+    [[10, 24, 3, 12], [5, 20, 5, 4], [13, 22, 6, 4], [7, 28, 4, 5], [12, 30, 4, 6]].forEach(
+      ([dx, dy, w, h]) => R(x + dx, b - dy, w, h, '#4f8f4f'));
+  },
+};
+DRAW.desk2 = DRAW.desk3 = DRAW.desk4 = DRAW.desk;
+
+function sprite(x, y, colour, leg, eyes, px) {
+  BODY.concat(LEGS[leg]).forEach((row, j) => {
+    for (let i = 0; i < row.length; i++) {
+      const c = row[i]; if (c === '.') continue;
+      R(x + i * px, y + j * px, px, px, c === 'E' && eyes ? '#2b1d16' : colour);
+    }
+  });
+}
+
+// ---------- layout ----------
+function furnish(room) {
+  const main = room.main, list = [main].concat(room.helpers);
+  // remember every station this session has needed while the page is open
+  Object.entries(main.kinds || {}).forEach(([k, n]) => { if (n && KIND_STATION[k]) room.seen.add(KIND_STATION[k]); });
+  list.forEach(c => (c.names || []).concat(c.tool || []).forEach(n => { const s = stationFor(n); if (s) room.seen.add(s); }));
+  room.seen.delete('desk');
+  // busier sessions get more computers: one more per 12 steps in the last 10 minutes, and one per helper
+  const extra = Math.min(3, Math.max(Math.floor((main.rate || 0) / 12), room.helpers.length));
+  const pri = { desk: 90, board: 80, coffee: 70, couch: 30, plant: 5 };
+  room.seen.forEach(s => pri[s] = 50 + Math.min(20, (main.names || []).filter(n => stationFor(n) === s).length));
+  for (let i = 0; i < extra; i++) pri['desk' + (i + 2)] = 45 - i;
+  list.forEach(c => { pri[goal(c, room)] = 100; });
+  // two rows: furniture against the back wall, and a front row for spare desks and the lounge.
+  // The front row only appears when the room needs it.
+  const avail = room.w - 44, need = ks => ks.reduce((a, k) => a + WIDTH[k] + 6, 0);
+  const rows = [[], []];
+  Object.keys(pri).filter(k => WIDTH[k]).forEach(k => rows[FRONT.includes(k) ? 1 : 0].push(k));
+  rows.forEach(ks => {
+    while (need(ks) > avail && ks.length > 1) { ks.sort((a, b) => pri[a] - pri[b]); ks.shift(); }
+    ks.sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
+  });
+  // a front row with only lounge things moves to the back row when there is room
+  if (rows[1].every(k => k === 'couch' || k === 'plant') && need(rows[0].concat(rows[1])) <= avail) {
+    rows[0] = rows[0].concat(rows[1]).sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)); rows[1] = [];
+  }
+  room.two = rows[1].length > 0;
+  room.h = ROOM_H + (room.two ? ROW2 : 0);
+  room.spots = {}; room.has = {};
+  rows.forEach((ks, r) => {
+    const spare = (avail - need(ks)) / (ks.length + 1);
+    let x = room.x + 10 + spare;
+    ks.forEach(k => {
+      room.spots[k] = { x, w: WIDTH[k], b: BACK + r * ROW2, feet: FEET + r * ROW2, row: r };
+      room.has[k] = true; x += WIDTH[k] + 6 + spare;
+    });
+  });
+  room.spots.door = { x: room.x + room.w - 32, w: 24, b: BACK, feet: FEET, row: 0 };
+}
+
+// a finished Claude takes a break: coffee first, then a random thing every 5 to 12 seconds
+const LEISURE = ['coffee', 'couch', 'plant', 'shelf', 'board', 'globe', 'wander', 'stretch', 'dance'];
+const FREE_SPOT = ['wander', 'stretch', 'dance'];
+const LEISURE_SAY = {
+  coffee: ['Ahh, coffee.', 'Coffee break!', 'One more cup.'], couch: ['Time to rest.', 'Feet up.', 'Nap time.'],
+  plant: ['Water for you, plant.', 'Grow, little plant.'], shelf: ['A good book.', 'Light reading.'],
+  board: ['Doodle time.', 'Drawing a cat.'], globe: ['Where next?', 'Holiday ideas.'],
+  stretch: ['Stretch!', 'Good for the back.'], dance: ['Task done!', 'Victory dance!'], wander: ['La la la.', ''],
+};
+function pickLeisure(cr, room, first) {
+  const opts = LEISURE.filter(k => FREE_SPOT.includes(k) || room.spots[k]);
+  let k = first && room.spots.coffee ? 'coffee' : opts[Math.random() * opts.length | 0];
+  if (!first && k === cr.leisure && opts.length > 1) k = opts[(opts.indexOf(k) + 1) % opts.length];
+  cr.leisure = k; cr.leisureT = 300 + Math.random() * 420 | 0; cr.said = false;
+  cr.wx = room.x + 16 + Math.random() * (room.w - 100);
+}
+
+function target(cr, room, i) {
+  let g = goal(cr.info, room);
+  if (cr.info.state === 'done') {
+    if (!cr.leisure) pickLeisure(cr, room, true);
+    g = cr.leisure;
+    if (FREE_SPOT.includes(g)) { cr.goal = g; cr.ty = FEET; return cr.wx; }
+  }
+  if (cr.info.parent && g === 'desk') {  // helpers take the spare desks first
+    const free = ['desk2', 'desk3', 'desk4'].filter(k => room.spots[k]);
+    if (free.length) g = free[i % free.length];
+  }
+  cr.goal = g;
+  const s = room.spots[g] || room.spots.desk || room.spots.door;
+  const px = cr.info.parent ? 2 : 3;
+  cr.ty = s.feet;
+  return s.x + s.w / 2 - 7 * px + (cr.info.parent ? (i % 2 ? 10 : -10) : 0);
+}
+
+function sync(claudes) {
+  const mains = claudes.filter(c => !c.parent), seen = new Set();
+  mains.forEach(m => { if (!order.includes(m.id)) order.push(m.id); });
+  order = order.filter(id => mains.some(m => m.id === id));
+  const cols = COLS, rw = (W - (cols - 1) * GAP) / cols;
+  const list = order.map(id => {
+    let room = rooms.get(id);
+    if (!room) { room = { seen: new Set(), critters: new Map() }; rooms.set(id, room); }
+    room.main = mains.find(c => c.id === id); room.helpers = claudes.filter(c => c.parent === id);
+    room.w = rw;
+    return room;
+  });
+  let y = 0;
+  for (let r = 0; r * cols < list.length; r++) {
+    const line = list.slice(r * cols, r * cols + cols);
+    line.forEach((room, c) => { room.x = c * (rw + GAP); room.y = y; furnish(room); });
+    const lh = Math.max(...line.map(room => room.h));
+    line.forEach(room => room.h = lh);
+    y += lh + GAP;
+  }
+  list.forEach(room => {
+    [room.main].concat(room.helpers).forEach((c, i) => {
+      seen.add(c.id);
+      let cr = room.critters.get(c.id);
+      if (!cr) {
+        cr = { x: room.spots.door.x, y: FEET, hop: 0, say: '', sayT: 0, state: c.state };
+        room.critters.set(c.id, cr);
+      }
+      if (cr.state !== c.state) {
+        if (c.state === 'done') { cr.hop = 14; cr.say = 'Done!'; cr.sayT = 90; cr.leisure = null; }
+        if (c.state === 'waiting') { cr.hop = 12; cr.say = 'Need you!'; cr.sayT = 140; }
+        if (c.state === 'error') { cr.say = 'Oops'; cr.sayT = 70; }
+      }
+      cr.info = c; cr.state = c.state; cr.idx = i; cr.tx = target(cr, room, i);
+    });
+    for (const [cid] of room.critters) if (!seen.has(cid)) room.critters.delete(cid);
+  });
+  for (const id of rooms.keys()) if (!order.includes(id)) rooms.delete(id);
+  const h = list.length ? y - GAP : 70;
+  if (h !== H) { H = h; resize(); }
+}
+
+function measure() {
+  const cw = canvas.clientWidth || 300;
+  COLS = Math.max(1, Math.floor(cw / COL_CSS));
+  S = Math.min(MAX_S, cw / (COLS * MIN_W + (COLS - 1) * GAP)); W = cw / S;  // W is the logical width
+}
+function resize() {
+  const r = window.devicePixelRatio || 1, cw = canvas.clientWidth || 300;
+  measure();
+  canvas.style.height = H * S + 'px';
+  canvas.width = cw * r; canvas.height = H * S * r;
+  ctx.setTransform(r * S, 0, 0, r * S, 0, 0);
+}
+
+// ---------- frame ----------
+function busyAt(room) {
+  const busy = new Set([...room.critters.values()]
+    .filter(c => Math.abs(c.x - c.tx) < 2 && Math.abs(c.y - c.ty) < 2 && c.info.state !== 'off').map(c => c.goal));
+  return busy;
+}
+
+function drawFurniture(room, row) {
+  const busy = busyAt(room), m = room.main;
+  Object.entries(room.spots).forEach(([k, s], n) => {
+    if (s.row !== row || !DRAW[k]) return;
+    DRAW[k](s.x, room.y + s.b, busy.has(k) || (k.startsWith('desk') && k !== 'desk' && m.state === 'working'), room.y, n);
+  });
+}
+
+function drawRoom(room) {
+  const { x: rx, y: ry, w: rw } = room, m = room.main, bar = room.h - (ROOM_H - BAR);
+  // wall
+  R(rx, ry, rw, WALL, '#2f3a46'); R(rx, ry + WALL - 4, rw, 4, '#26303a');
+  // floor
+  for (let fy = ry + WALL, j = 0; fy < ry + bar; fy += 10, j++)
+    for (let fx = rx, i = 0; fx < rx + rw; fx += 14, i++)
+      R(fx, fy, Math.min(14, rx + rw - fx), Math.min(10, ry + bar - fy), (i + j) % 2 ? '#4a3f35' : '#443a31');
+  R(rx, ry + WALL, rw, 2, '#1f262e');
+  // door
+  const d = room.spots.door, open = m.state === 'waiting';
+  R(d.x, ry + 34, 24, BACK - 34, '#6e4a30'); R(d.x + 2, ry + 36, 20, BACK - 36, open ? '#151719' : '#8a5a3c');
+  if (open) R(d.x + 2, ry + 36, 5, BACK - 36, '#a06a46'); else R(d.x + 17, ry + 64, 3, 3, '#e0c070');
+  drawFurniture(room, 0);
+  // name plate
+  ctx.font = '600 11px system-ui, Segoe UI, sans-serif';
+  const label = fit(m.project, rw * 0.45), lw = ctx.measureText(label).width;
+  R(rx + 6, ry + 5, lw + 22, 15, '#1b2128'); R(rx + 11, ry + 10, 5, 5, m.colour);
+  txt(label, rx + 20, ry + 16, '#f0eee6', 11, 'left', '600');
+  txt(`${m.name}  ${m.rate || 0} steps / 10 min`, rx + rw - 8, ry + 16, '#a39e93', 10, 'right');
+  // status bar
+  R(rx, ry + bar, rw, ROOM_H - BAR, '#1b1a19');
+  const warn = m.state === 'waiting' || m.state === 'error';
+  const head = m.word + (m.turn ? ' ' + m.turn : '');
+  txt(head, rx + 8, ry + bar + 15, warn ? '#e0a43a' : '#f0eee6', 11, 'left', '600');
+  ctx.font = '11px system-ui'; const hw = ctx.measureText(head).width + 10;
+  txt(fit(m.step || '', rw - hw - 20), rx + 8 + hw, ry + bar + 15, '#a39e93', 11);
+}
+
+function drawBorder(room) {
+  const m = room.main, warn = m.state === 'waiting' || m.state === 'error';
+  ctx.strokeStyle = warn && (t >> 5) % 2 ? '#e0a43a' : '#3d3a36'; ctx.lineWidth = 1;
+  ctx.strokeRect(room.x + 0.5, room.y + 0.5, room.w - 1, room.h - 1);
+}
+
+// what Claude holds or does on a break
+function drawProp(cr, kind, y, sw, sh, room) {
+  const hx = cr.x + sw - 2, hy = y + sh * 0.45;
+  if (kind === 'coffee') {
+    const sip = (t % 160) < 30 ? -4 : 0;
+    R(hx, hy + sip, 6, 7, '#e8e4dc'); R(hx + 6, hy + 2 + sip, 2, 3, '#e8e4dc'); R(hx + 1, hy + 1 + sip, 4, 2, '#6b4226');
+    for (let i = 0; i < 2; i++) {
+      const k = (t + i * 18) % 36; R(hx + 2 + i * 2 + Math.sin(k / 4), hy - 2 - k / 3 + sip, 1, 2, `rgba(255,255,255,${0.6 - k / 60})`);
+    }
+  } else if (kind === 'shelf') {
+    R(hx - 2, hy, 10, 8, '#c0504d'); R(hx + 2, hy, 1, 8, '#f5f3ee');
+  } else if (kind === 'plant') {
+    R(cr.x - 10, hy, 9, 6, '#6A9BCC'); R(cr.x - 14, hy - 2, 5, 2, '#6A9BCC');
+    for (let i = 0; i < 3; i++) { const k = (t + i * 7) % 20; R(cr.x - 15 - i, hy + k, 1, 2, '#8cc4ff'); }
+  } else if (kind === 'board') {
+    R(hx, hy - 6, 2, 8, '#c0504d');
+  } else if (kind === 'globe') {
+    if ((t >> 5) % 2) txt('?', cr.x + sw / 2, y - 4, '#d6d3cc', 11, 'center', '700');
+  } else if (kind === 'dance') {
+    const k = t % 60; txt('♪', cr.x + sw + 4 + k / 10, y - k / 4, `rgba(240,238,230,${1 - k / 60})`, 12);
+  }
+}
+
+function drawCritter(room, cr) {
+  const c = cr.info, px = c.parent ? 2 : 3, sw = 14 * px, sh = 9 * px;
+  // walk along the back lane, then step forward or back between the rows
+  const dx = cr.tx - cr.x, dy = cr.ty - cr.y, speed = c.state === 'working' ? 2 : 1.3;
+  const moving = Math.abs(dx) > 1.5 || Math.abs(dy) > 1.5;
+  if (Math.abs(dy) > 1.5 && (Math.abs(dx) <= 1.5 || cr.y > FEET + 1)) cr.y += Math.sign(dy) * Math.min(Math.abs(dy), speed);
+  else if (Math.abs(dx) > 1.5) cr.x += Math.sign(dx) * Math.min(Math.abs(dx), speed);
+  if (cr.hop > 0) cr.hop--;
+  const lift = cr.hop > 0 ? Math.sin(cr.hop / 14 * Math.PI) * 10 : 0;
+  const atWork = !moving && c.state === 'working';
+  const bob = atWork ? ((t >> 3) % 2) : c.state === 'thinking' ? Math.sin(t / 10) * 1.5 : 0;
+  const lying = !moving && c.state === 'off' && cr.goal === 'couch';
+  const relax = !moving && c.state === 'done' ? cr.goal : '';
+  // break time: the next random thing when this one is over, and a line on arrival
+  if (relax) {
+    if (!cr.said && cr.sayT <= 0) {
+      const lines = LEISURE_SAY[relax] || [''], line = lines[Math.random() * lines.length | 0];
+      if (line) { cr.say = line; cr.sayT = 80; }
+      cr.said = true;
+    }
+    if (--cr.leisureT <= 0) { pickLeisure(cr, room); cr.tx = target(cr, room, cr.idx || 0); }
+    if (relax === 'stretch' && cr.leisureT % 90 === 0) cr.hop = 14;
+    if (relax === 'dance' && cr.leisureT % 24 === 0) { cr.hop = 8; cr.x += (cr.leisureT / 24 | 0) % 2 ? 4 : -4; cr.tx = cr.x; }
+  }
+  const sitting = relax === 'couch';
+  const y = room.y + (lying ? cr.y - 30 : sitting ? cr.y - 38 : cr.y) - sh - lift
+    + (sitting ? Math.sin(t / 30) : bob);
+  ctx.globalAlpha = c.state === 'off' ? 0.7 : 1;
+  const resting = sitting && cr.leisureT < 240;  // dozes off near the end of a rest
+  sprite(cr.x, y, c.colour, moving ? (t >> 3) % 2 : 0, c.state !== 'off' && !resting && t % 200 > 5, px);
+  ctx.globalAlpha = 1;
+  cr.box = [cr.x, y, sw, sh];
+  if (relax) drawProp(cr, relax, y, sw, sh, room);
+  if (resting) txt((t >> 5) % 2 ? 'z' : 'Z', cr.x + sw + 2, y - 2, '#a39e93', 10);
+  if (c.state === 'off' && !moving) txt((t >> 5) % 2 ? 'z' : 'Z', cr.x + sw + 2, y - 2, '#a39e93', 10);
+  if (c.state === 'thinking' && !moving)
+    for (let k = 0; k < 3; k++) if ((t / 15 | 0) % 4 > k) R(cr.x + sw / 2 - 6 + k * 5, y - 6, 2, 2, '#d6d3cc');
+  if (c.state === 'waiting') {
+    if (cr.sayT <= 0 && (t >> 4) % 2) txt('!', cr.x + sw / 2, y - 4, '#e0a43a', 14, 'center', '700');
+  }
+  if (cr.sayT > 0) {
+    cr.sayT--;
+    ctx.font = '11px system-ui'; const tw = ctx.measureText(cr.say).width + 10;
+    const bx = Math.min(Math.max(cr.x + sw / 2, room.x + tw / 2 + 2), room.x + room.w - tw / 2 - 2);
+    R(bx - tw / 2, y - 22, tw, 16, '#f0eee6'); R(bx - 2, y - 6, 4, 3, '#f0eee6');
+    txt(cr.say, bx, y - 10, '#1f1e1d', 11, 'center');
+  }
+}
+
+function frame() {
+  t++;
+  ctx.clearRect(0, 0, W, H);
+  if (!rooms.size) {
+    txt('The office is empty: no Claude sessions active in the last 30 minutes.', W / 2, 38,
+      getComputedStyle(document.documentElement).getPropertyValue('--faint'), 12, 'center');
+  }
+  for (const id of order) {
+    const room = rooms.get(id); if (!room || !room.spots) continue;
+    drawRoom(room);
+    // back to front: Claudes in the back lane, the front row of furniture, then Claudes in front of it
+    const crs = [...room.critters.values()].sort((a, b) => a.y - b.y || (a.info.parent ? 1 : 0) - (b.info.parent ? 1 : 0));
+    crs.filter(cr => cr.y <= FEET + ROW2 / 2).forEach(cr => drawCritter(room, cr));
+    drawFurniture(room, 1);
+    crs.filter(cr => cr.y > FEET + ROW2 / 2).forEach(cr => drawCritter(room, cr));
+    drawBorder(room);
+  }
+  hearts = hearts.filter(p => (p.y -= 0.6, p.t--, p.t > 0));
+  hearts.forEach(p => { ctx.globalAlpha = p.t / 40; txt('♥', p.x, p.y, '#e5484d', 11, 'center'); });
+  ctx.globalAlpha = 1;
+  requestAnimationFrame(frame);
+}
+
+// ---------- mouse ----------
+function at(e) {
+  const r = canvas.getBoundingClientRect(), x = (e.clientX - r.left) / S, y = (e.clientY - r.top) / S;
+  for (const id of order) {
+    const room = rooms.get(id); if (!room) continue;
+    for (const cr of room.critters.values()) {
+      const [bx, by, bw, bh] = cr.box || [];
+      if (x >= bx - 4 && x <= bx + bw + 4 && y >= by - 6 && y <= by + bh + 4) return { cr, room };
+    }
+    if (x >= room.x && x <= room.x + room.w && y >= room.y && y <= room.y + room.h) {
+      for (const [k, s] of Object.entries(room.spots))
+        if (x >= s.x && x <= s.x + s.w && y >= room.y + s.b - 60 && y <= room.y + s.b) return { spot: k === 'door' ? 'Door' : LABELS[k] };
+    }
+  }
+  return null;
+}
+canvas.addEventListener('click', e => {
+  const hit = at(e); if (!hit || !hit.cr) return;
+  const { cr } = hit, [bx, by, bw] = cr.box;
+  cr.hop = 14; cr.say = PATS[Math.random() * PATS.length | 0]; cr.sayT = 90;
+  for (let k = 0; k < 4; k++) hearts.push({ x: bx + bw / 2 + (k - 1.5) * 6, y: by - 4 - k * 3, t: 40 });
+});
+canvas.addEventListener('mousemove', e => {
+  const hit = at(e);
+  canvas.style.cursor = hit && hit.cr ? 'pointer' : 'default';
+  if (!hit) { tip.style.display = 'none'; return; }
+  let html;
+  if (hit.cr) {
+    const c = hit.cr.info, esc = s => String(s).replace(/[&<>]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[ch]);
+    html = `<b>${esc(c.name)}</b> ${esc(c.parent ? c.desc || 'helper' : c.project)}<br>${esc(c.word)}${c.turn ? ' ' + esc(c.turn) : ''}`
+      + (c.step ? `<br>${esc(c.step)}` : '') + (c.context ? `<br>Context ${esc(c.context)}` : '')
+      + `<br>${c.steps} steps`;
+  } else html = hit.spot;
+  tip.innerHTML = html; tip.style.display = 'block';
+  tip.style.left = Math.min(e.clientX + 12, innerWidth - 270) + 'px'; tip.style.top = (e.clientY + 14) + 'px';
+});
+canvas.addEventListener('mouseleave', () => tip.style.display = 'none');
+window.addEventListener('resize', () => { measure(); if (last) sync(last); resize(); });
+
+// ?demo: made-up sessions that change tools every few seconds, to preview a busy office
+const DEMO_TOOLS = ['Edit', 'Bash', 'Read', 'Grep', 'WebSearch', 'mcp__Claude_Browser__computer', 'Agent',
+  'mcp__calendar__create_event', 'mcp__gmail__create_draft', 'Artifact', 'Skill', 'mcp__ccd_turn__update_plan'];
+function demo() {
+  const k = Math.floor(Date.now() / 4000), pick = n => DEMO_TOOLS[(k + n) % DEMO_TOOLS.length];
+  const states = ['working', 'working', 'working', 'thinking', 'waiting', 'done', 'off'];
+  const mk = (id, name, project, colour, n, extra) => {
+    const state = id === 'a' ? 'working' : states[(k + n) % states.length], tool = state === 'working' ? pick(n) : '';
+    return Object.assign({ id, parent: '', name, project, colour, state, tool, word: state, turn: '2m 10s',
+      step: tool, steps: 40 + n, rate: 10 + n * 9, names: DEMO_TOOLS.slice(0, 4 + n * 2), kinds: {}, context: '' }, extra);
+  };
+  return [
+    mk('a', 'Opus 5.5', 'Busy Project', '#D97757', 3),
+    mk('b', 'Sonnet 5.5', 'Website', '#6A9BCC', 1),
+    mk('a1', 'Explore', '', '#D97757', 5, { parent: 'a', desc: 'Find the API routes', names: [] }),
+    mk('a2', 'Plan', '', '#D97757', 2, { parent: 'a', desc: 'Plan the refactor', names: [] }),
+  ];
+}
+
+async function poll() {
+  if (location.search.includes('demo')) { measure(); sync(last = demo()); setTimeout(poll, 1500); return; }
+  try {
+    const d = await (await fetch('/state', { cache: 'no-store' })).json();
+    measure(); sync(last = d.claudes);
+  } catch (e) {
+    // server stopped: the desktop app window (opened with ?app) closes itself; elsewhere keep the last picture
+    if (location.search.includes('app')) window.close();
+  }
+  setTimeout(poll, 1500);
+}
+resize(); poll(); frame();
+</script>
+</body>
+</html>
