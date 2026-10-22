@@ -195,7 +195,7 @@ class Session:
         self.project = parent.project if parent else project_name(os.path.basename(os.path.dirname(path)))
         self.label = ''       # helper type, like 'Explore'
         self.desc = ''        # helper task, from the Agent call
-        self.agents = []      # Agent calls in this session: (time, description, type)
+        self.agents = []      # Agent calls in this session: (time, description, type, call id)
         self.tool_id = ''     # for a helper: the id of the Agent call that started it
         # Agent calls that have reported back; helpers share their main session's set, so
         # helpers started by helpers finish too
@@ -310,7 +310,7 @@ class Session:
                 if path and name in ('Edit', 'Write', 'NotebookEdit'):
                     self.files[path] = ts
                 if name in ('Agent', 'Task'):
-                    self.agents.append((ts, inp.get('description') or '', inp.get('subagent_type') or ''))
+                    self.agents.append((ts, inp.get('description') or '', inp.get('subagent_type') or '', x.get('id') or ''))
                 self.recent.append((ts,) + describe(name, inp))
 
     def notice(self, name, inp, tid, ts):
@@ -406,8 +406,10 @@ class Session:
                     return 'waiting', name
                 # waiting on its own helper is normal work, not waiting for you
                 busy_helper = name in ('Agent', 'Task') or now - self.helper_mtime < 30
-                # with the hooks installed a permission prompt is reported exactly, so a long step is just work
-                guess = age > WAIT_SECS and not busy_helper and not os.path.exists(HOOKS_MARKER)
+                # with the hooks installed a permission prompt is reported exactly, so a long step is just work;
+                # a helper's long step is work too (a prompt it raises shows up on its main session)
+                guess = (age > WAIT_SECS and not busy_helper and not self.helper
+                         and not os.path.exists(HOOKS_MARKER))
                 return ('waiting' if guess else 'working'), name
             if msg.get('stop_reason') == 'end_turn':
                 return 'done', ''
@@ -435,6 +437,17 @@ def read_meta(s):
     s.label = d.get('agentType') or d.get('subagent_type') or d.get('type') or s.label
     s.desc = d.get('description') or s.desc
     s.tool_id = d.get('toolUseId') or s.tool_id
+
+
+def parent_id(path):
+    """The session a loose helper transcript belongs to, from the sessionId on its first lines."""
+    try:
+        with open(path, 'rb') as fh:
+            head = fh.read(8192)
+    except OSError:
+        return ''
+    m = re.search(rb'"sessionId"\s*:\s*"([0-9A-Za-z_-]+)"', head)
+    return m.group(1).decode() if m else ''
 
 
 class Tracker(threading.Thread):
@@ -467,9 +480,15 @@ class Tracker(threading.Thread):
                 files = [f for f in os.scandir(folder) if f.name.endswith('.jsonl')]
             except OSError:
                 continue
+            loose = {}  # older Claude Code keeps helper transcripts (agent-*.jsonl) beside the sessions
             for f in files:
                 try:
                     if now - f.stat().st_mtime > DAY:
+                        continue
+                    if f.name.startswith('agent-'):
+                        parent = parent_id(f.path)
+                        if parent:
+                            loose.setdefault(os.path.join(folder, parent + '.jsonl'), []).append(f.path)
                         continue
                     with self.lock:
                         s = self.sessions.get(f.path)
@@ -477,7 +496,7 @@ class Tracker(threading.Thread):
                             s = self.sessions[f.path] = Session(f.path)
                         s.update()
                         if now - s.mtime < ACTIVE_SECS:
-                            self.scan_helpers(s, now)
+                            self.scan_helpers(s, now, loose.get(f.path, []))
                 except Exception:
                     log_error()
         self.read_hooks(now)
@@ -519,16 +538,16 @@ class Tracker(threading.Thread):
                 with self.lock:
                     s.hook = note
 
-    def scan_helpers(self, main, now):
-        """Subagent transcripts live in a folder named after the session."""
+    def scan_helpers(self, main, now, loose=()):
+        """Subagent transcripts live in a folder named after the session (older versions: beside it)."""
         folder = main.path[:-len('.jsonl')]
-        if not os.path.isdir(folder):
-            return
-        found = []
+        found = list(loose)
         for root, _, names in os.walk(folder):
             for n in names:
                 if n.endswith('.jsonl'):
                     found.append(os.path.join(root, n))
+        if not found:
+            return
         new = False
         for p in found:
             s = self.sessions.get(p)
@@ -547,8 +566,9 @@ class Tracker(threading.Thread):
             # without a meta file, match helpers to the session's Agent calls in the order they started
             mine = sorted((s for s in self.sessions.values() if s.parent is main and s.started),
                           key=lambda s: s.started)
-            for s, (_, desc, kind) in zip(mine, main.agents):
+            for s, (_, desc, kind, tid) in zip(mine, main.agents):
                 s.desc = s.desc or desc
+                s.tool_id = s.tool_id or tid
                 s.label = s.label or kind or 'Helper'
             for s in mine:
                 s.label = s.label or 'Helper'

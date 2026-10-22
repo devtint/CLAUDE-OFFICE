@@ -763,6 +763,17 @@ function freeMood(a) {
 
 const findBuddy = a => agents.find(o => o !== a && o.activity === 'done' && o.level === 'desk' && FREE_ACTIONS.includes(o.action) && !o.buddy);
 
+// A spot near x that no other agent on the same level is heading for, so two never stand in one place
+function freeSpot(a, x) {
+  const [lo, hi] = a.level === 'floor' ? FLOOR_X : DESK_X;
+  for (const d of [0, 14, -14, 28, -28, 42, -42]) {
+    const c = Math.max(lo, Math.min(hi, x + d));
+    if (!agents.some(o => o !== a && o.level === a.level && o.target !== undefined && o.timer === Infinity
+        && o.action !== 'work' && Math.abs(o.target - c) < 13)) return c;
+  }
+  return x;
+}
+
 function startAction(a, name) {
   if (DESK_ONLY.includes(name) && a.level === 'floor') {
     setLevel(a, 'desk');
@@ -797,13 +808,13 @@ function startAction(a, name) {
     }
     case 'buddy':   a.timer = 8; break;
     case 'work':    a.timer = Infinity; break;
-    case 'busy':    a.target = rand(66, 112); a.timer = Infinity; break; // waits by the tank for a free computer
-    case 'read':    a.target = SHELF_SPOT + rand(-3, 3); a.timer = Infinity; break;
-    case 'browse':  a.target = LAPTOP_SPOT; a.timer = Infinity; break;
-    case 'summon':  a.target = PORTAL.x - 18; a.timer = Infinity; break; // calls its helper in through the portal
-    case 'plan':    setLevel(a, 'floor'); a.target = BOARD.spot + rand(-5, 5); a.timer = Infinity; break; // writes on the whiteboard
-    case 'mail':    setLevel(a, 'floor'); a.target = MAIL_SPOT; a.timer = Infinity; break;
-    case 'calendar': a.target = CALENDAR_SPOT; a.timer = Infinity; break;
+    case 'busy':    a.target = freeSpot(a, rand(66, 112)); a.timer = Infinity; break; // waits by the tank for a free computer
+    case 'read':    a.target = freeSpot(a, SHELF_SPOT + rand(-3, 3)); a.timer = Infinity; break;
+    case 'browse':  a.target = freeSpot(a, LAPTOP_SPOT); a.timer = Infinity; break;
+    case 'summon':  a.target = freeSpot(a, PORTAL.x - 18); a.timer = Infinity; break; // calls its helper in through the portal
+    case 'plan':    setLevel(a, 'floor'); a.target = freeSpot(a, BOARD.spot + rand(-5, 5)); a.timer = Infinity; break; // writes on the whiteboard
+    case 'mail':    setLevel(a, 'floor'); a.target = freeSpot(a, MAIL_SPOT); a.timer = Infinity; break;
+    case 'calendar': a.target = freeSpot(a, CALENDAR_SPOT); a.timer = Infinity; break;
     case 'ship':    a.target = PORTAL.x; a.timer = Infinity; break; // carries a pushed commit to the portal
     case 'chat': {
       const mate = agents.find(o => o !== a && o.level === a.level && o.info.project === a.info.project && FREE_ACTIONS.includes(o.action));
@@ -984,8 +995,9 @@ function yawTarget(a, t) {
   const walking = a.face * 1.1;
   if (a.moving) return walking;
   switch (a.action) {
-    case 'work': case 'fish': case 'leave': case 'read': case 'book':
+    case 'work': case 'fish': case 'leave':
       return a.arrived ? Math.PI : walking;
+    case 'read': case 'book': return a.arrived ? 2.4 : walking; // half turned to the shelf, face still showing
     case 'browse': return a.arrived ? -1.3 : walking; // turned toward the laptop
     case 'summon': return a.arrived ? 1.2 : walking;  // facing the portal
     case 'plan': case 'calendar': case 'ship': return a.arrived ? Math.PI : walking;
@@ -1907,10 +1919,6 @@ function drawPops() {
   for (const p of pops) if (p.age < p.life * 0.8 || Math.floor(p.age * 10) % 2) text(p.color, p.str, p.x, p.y);
 }
 
-function drawHint(t) {
-  if (!agents.length && Math.floor(t * 2) % 2)
-    text(C.white, world.ready ? 'WAITING FOR CLAUDE' : 'READING SESSIONS', 124, 6);
-}
 
 // ---------- Main loop ----------
 
@@ -1960,7 +1968,6 @@ function draw(t) {
   drawCat(t);
   for (const a of agents) if (a.level === 'floor') drawAgent(a, t);
   drawPops();
-  drawHint(t);
   ctx.restore();
 }
 
