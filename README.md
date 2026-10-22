@@ -15,15 +15,20 @@ Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packag
 
 ## Features
 
-- **One agent per session.** Each Claude wears an antenna in its model's colour: Opus amber,
-  Sonnet blue, Haiku green, others white. Helpers (subagents) are smaller Claudes.
+- **One agent per session, in its model's colour:** Opus orange, Sonnet blue, Haiku green, Fable
+  purple, other models grey. Helpers (subagents) are smaller Claudes in their session's colour, and
+  their session goes to the portal to call them in.
 - **Two computers** show what the agent at them is doing: `CODE` (Edit, Write) with code being
   typed, `RUN` (Bash) with a terminal and a progress bar, `FIX` after an error, and `DONE` when the
   task is finished. The title bar shows the project. When both are taken, the next agent waits by
   the tank with `<>` or `$` until one is free.
+- **The intercom:** when a session needs your approval or asks you a question, its Claude goes to
+  the intercom by the window, sits down with the handset and asks "OK?". The beacon flashes and the
+  screen shows `ASK`; others who need you queue beside it. Tap the intercom to see what it is
+  asking. Questions (`AskUserQuestion`) and plans to approve (`ExitPlanMode`) count straight away;
+  any other step counts after it has waited 45 seconds.
 - **The rest of the room:** reading files sends an agent to the bookshelf, web tools to the
-  laptop, thinking shows `...`, and "may need you" shows a blinking `!` and a wave. Idle sessions
-  sleep on the edge of the desk.
+  laptop and thinking shows `...`. Idle sessions sleep on the edge of the desk.
 - **The laptop** counts the open tabs (sessions), with a dot for what each one is doing.
 - **Free time** after a task: feed or tap the fish tank, pet the cat, sip tea, read a book,
   watch the sky (more often when it rains), stretch, dance or high-five another free agent.

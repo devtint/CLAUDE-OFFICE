@@ -173,7 +173,6 @@ function shortName(str, max) {
 const TILT = 0.4; // the camera looks a little down, so top faces show
 const LIGHT = [-0.3, 0.8, 0.5].map(v => v / Math.hypot(0.3, 0.8, 0.5));
 const MAT = {
-  claude: { spark: C.amber, lit: C.amber, dark: C.oak },
   cat:    { spark: C.white, lit: C.white, dark: C.blue, soft: true } // fur: sparse shading, not a checkerboard
 };
 
@@ -299,6 +298,7 @@ const TANK = { x: 62, y: 104, w: 32, h: 24 };
 const CUP_X = 104;
 const SHELF_SPOT = 226, LAPTOP_SPOT = 270; // stand beside the laptop so TABS stays visible
 const MAX_AGENTS = 8;
+const COMM = { x: 16, spot: 50 }; // intercom table on the floor under the window, and where callers stand
 const monitors = [{ x: 116, agent: null }, { x: 174, agent: null }];
 
 const stars = [[30, 27], [41, 33], [52, 25], [63, 36], [72, 28], [36, 44], [98, 52], [58, 47], [104, 30]]
@@ -589,15 +589,17 @@ function updateCat(dt, t) {
 
 const agents = [];
 
-// Model colour from /state mapped onto the palette, worn as the antenna tip
-function badgeFor(colour) {
-  const c = String(colour).toLowerCase();
-  return c === '#d97757' ? C.amber : c === '#6a9bcc' ? C.blue : c === '#7fa36b' ? C.green : C.white;
+// Body colour by model, straight from /state: Opus orange, Sonnet blue, Haiku green, Fable purple,
+// other models grey. The shaded sides use the same colour, darker.
+function modelMat(colour) {
+  const lit = /^#[0-9a-f]{6}$/i.test(colour || '') ? colour : '#D97757';
+  const n = parseInt(lit.slice(1), 16), ch = k => Math.round(((n >> k) & 255) * 0.62);
+  return { spark: lit, lit, dark: `rgb(${ch(16)},${ch(8)},${ch(0)})` };
 }
 
 function spawnAgent(info) {
   const a = {
-    id: info.id, info, helper: !!info.parent, badge: badgeFor(info.colour), code: makeCode(hashText(info.id)),
+    id: info.id, info, helper: !!info.parent, mat: modelMat(info.colour), code: makeCode(hashText(info.id)),
     x: PORTAL.x, y: 0, vx: 0, vy: 0, level: 'desk', seat: false, squash: 0, scale: 0.1,
     action: 'spawn', timer: Infinity, target: PORTAL.x, face: -1, hops: 0, happy: 0, yaw: 0, idleYaw: 0, spin: 0,
     activity: '', task: null, taskTime: 0, monitor: null, arrived: false, moving: false, sub: 0, after: null, buddy: null
@@ -671,6 +673,7 @@ const KIND = tool =>
   : /^(Bash|PowerShell)$/.test(tool) ? 'run'
   : /^(Read|Grep|Glob)$/.test(tool) ? 'read'
   : /Web|Browser|chrome/.test(tool) ? 'web'
+  : /^(Agent|Task)$/.test(tool) ? 'summon'
   : 'think';
 
 function activityOf(c) {
@@ -686,9 +689,10 @@ function activityOf(c) {
 
 const AT_COMPUTER = ['code', 'run', 'fix'];
 const FREE_ACTIONS = ['sit', 'walk', 'hop', 'dance', 'look', 'gaze', 'fish', 'cat', 'tea', 'stretch', 'book', 'highfive', 'sleep', 'think'];
-const DESK_ONLY = ['sit', 'sleep', 'gaze', 'fish', 'tea', 'book', 'work', 'busy', 'read', 'browse', 'leave', 'highfive'];
+const DESK_ONLY = ['sit', 'sleep', 'gaze', 'fish', 'tea', 'book', 'work', 'busy', 'read', 'browse', 'summon', 'leave', 'highfive'];
 
 function applyState(a, c) {
+  if (c.colour !== a.info.colour) a.mat = modelMat(c.colour); // the model can change mid-session
   a.info = c;
   const act = activityOf(c);
   if (act === a.activity) return;
@@ -707,6 +711,7 @@ function plan(a) {
     case 'done':  return startAction(a, a.monitor ? 'work' : freeMood(a));
     case 'read':  return startAction(a, 'read');
     case 'web':   return startAction(a, 'browse');
+    case 'summon': return startAction(a, 'summon');
     case 'wait':  return startAction(a, 'wait');
     case 'off':   return startAction(a, 'sleep');
     default:      return startAction(a, 'think');
@@ -761,13 +766,18 @@ function startAction(a, name) {
     case 'busy':    a.target = rand(66, 112); a.timer = Infinity; break; // waits by the tank for a free computer
     case 'read':    a.target = SHELF_SPOT + rand(-3, 3); a.timer = Infinity; break;
     case 'browse':  a.target = LAPTOP_SPOT; a.timer = Infinity; break;
+    case 'summon':  a.target = PORTAL.x - 18; a.timer = Infinity; break; // calls its helper in through the portal
     case 'think':   a.target = rand(lo, hi); a.timer = rand(3, 6); break;
-    case 'wait':    a.timer = Infinity; break;
+    case 'wait':    setLevel(a, 'floor'); a.waitSince = now; a.timer = Infinity; break; // off to the intercom
     case 'leave':   release(a); a.target = PORTAL.x; a.timer = Infinity; break;
     case 'alarm':   pop('!', a.x - 1, bottomOf(a) - 18, C.amber); if (grounded(a)) jump(a, -70); a.timer = 2; break;
     default:        a.timer = 2;
   }
 }
+
+// Agents waiting for the user, in the order they arrived; the first one is on the intercom
+const callQueue = () => agents.filter(a => a.action === 'wait').sort((p, q) => p.waitSince - q.waitSince);
+const onCall = a => a.action === 'wait' && a.arrived && callQueue()[0] === a;
 
 function nextAction(a) {
   // free-time actions run out and pick another; the rest re-plan from the session state
@@ -827,10 +837,20 @@ function updateAgent(a, dt, t) {
     case 'think':
       a.arrived = walkTo(a, a.target, 8, dt);
       break;
-    case 'wait':
-      a.arrived = true;
-      if (ready && Math.random() < dt * 0.3) jump(a, -40);
+    case 'summon':
+      if (walkTo(a, a.target, 22, dt)) {
+        a.arrived = true;
+        a.happy = Math.max(a.happy, 0.3); // waves its helper in
+        if (Math.random() < dt * 0.8) world.portalFlare = 0.4;
+      }
       break;
+    case 'wait': {
+      // the first in line takes the handset; the others queue beside the intercom
+      if (a.level !== 'floor') break;
+      a.arrived = walkTo(a, COMM.spot + callQueue().indexOf(a) * 16, 30, dt); // hurries: you are needed
+      if (a.arrived && !onCall(a) && ready && Math.random() < dt * 0.3) jump(a, -40);
+      break;
+    }
     case 'fish':
       if (!walkTo(a, a.target, 14, dt)) break;
       a.arrived = true;
@@ -894,6 +914,7 @@ function yawTarget(a, t) {
     case 'work': case 'fish': case 'leave': case 'read': case 'book':
       return a.arrived ? Math.PI : walking;
     case 'browse': return a.arrived ? -1.3 : walking; // turned toward the laptop
+    case 'summon': return a.arrived ? 1.2 : walking;  // facing the portal
     case 'busy':  return 0.4;
     case 'tea':   return a.arrived ? 1.2 : walking;
     case 'gaze':  return a.arrived ? -2.6 : walking; // back to us, looking out of the window
@@ -902,7 +923,8 @@ function yawTarget(a, t) {
     case 'think': return Math.sin(t * 0.8 + a.x) * 0.6;
     case 'look':  return Math.sin(t * 1.6 + a.x) * 1.2;
     case 'sleep': return 0.35;
-    case 'wait': case 'alarm': case 'spawn': return 0;
+    case 'wait':  return onCall(a) ? -1.3 : 0; // on call: turned to the intercom
+    case 'alarm': case 'spawn': return 0;
     default:      return a.idleYaw;
   }
 }
@@ -1002,6 +1024,7 @@ function drawLights(t, s) {
   glow(C.navy, 172, 100, 78, 36);                                                     // monitor glow
   glow(world.portalFlare > 0 ? C.green : C.navy, PORTAL.x, PORTAL.y, 26, 26, 0.35); // portal glow
   if (lightning()) glow(C.blue, 66, 110, 80, 60, 0.6);
+  if (callQueue().some(a => a.arrived) && Math.floor(t * 4) % 2) glow(C.amber, COMM.x + 21, 140, 14, 10, 0); // intercom beacon
   // Sunlight or moonlight on the floor, dimmer at twilight, under clouds or a thin moon, gone in rain
   if (wet()) return;
   const weak = s.twilight || dull() || bodyCovered(t, s) || (!s.day && moonLight() < 0.3);
@@ -1332,7 +1355,7 @@ function drawLaptop(t) {
   agents.slice(0, 6).forEach((a, i) => {
     const blink = a.activity === 'wait' && Math.floor(t * 3) % 2;
     rect(blink ? C.night : tone[a.activity] || C.navy, x + 4 + i * 4, y + 12, 3, 3);
-    px(a.badge, x + 5 + i * 4, y + 16);
+    px(a.mat.lit, x + 5 + i * 4, y + 16);
   });
 }
 
@@ -1529,14 +1552,15 @@ function catEar([x, y], right) {
   frect(C.white, fx + s, fy - 3);
 }
 
-// Claude agents: little amber 3D blocks with an antenna in their model's colour
+// Claude agents: little 3D blocks in their model's colour, with an antenna
 function drawAgent(a, t) {
   const s = a.scale, air = a.y < -0.5, yaw = a.yaw;
   const crouch = !air && a.squash > 0;
   const [w, h, d] = (crouch ? [16, 8, 11] : air ? [12, 11, 9] : [14, 10, 10]).map(v => v * s);
   const walking = a.moving && !air;
   const bob = walking && Math.floor(t * 8) % 2 ? 1 : 0;
-  const feet = { x: Math.round(a.x), y: bottomOf(a) }, o = { x: feet.x, y: feet.y - bob };
+  const squat = onCall(a) ? 3 : 0; // sits on the floor while on the intercom
+  const feet = { x: Math.round(a.x), y: bottomOf(a) + squat }, o = { x: feet.x, y: feet.y - bob };
   const typing = a.action === 'work' && a.arrived && a.task && a.task !== 'done';
   const petting = a.action === 'cat' && a.arrived;
 
@@ -1554,19 +1578,20 @@ function drawAgent(a, t) {
     const phase = i === 0 || i === 3 ? 0 : Math.PI;
     let len = 4, dz = 0, lift = 0;
     if (air) len = 3;
+    else if (squat) { len = 1; dz = 2; }
     else if (a.seat) { len = 5; dz = Math.sin(t * (a.action === 'sleep' ? 1.5 : 5) + phase) * 2.5; }
     else if (walking) { dz = Math.sin(t * 12 + phase) * 1.5; lift = Math.max(0, Math.sin(t * 12 + phase)); }
     len *= s;
     const top = toScreen(feet, rotY([lx, 0, lz], yaw)), foot = toScreen(feet, rotY([lx, -len + lift, lz + dz], yaw));
-    parts.push({ z: depth([lx, 0, lz], yaw) - 10, draw: () => line(rotY([lx, 0, lz], yaw)[0] > 0 ? C.oak : C.amber, ...top, ...foot, R) });
+    parts.push({ z: depth([lx, 0, lz], yaw) - 10, draw: () => line(rotY([lx, 0, lz], yaw)[0] > 0 ? a.mat.dark : a.mat.lit, ...top, ...foot, R) });
   });
 
   // Body, antenna and face
   parts.push({ z: 0, draw: () => {
-    box(o, yaw, [0, 0, 0], [w, h, d], MAT.claude, rimLight);
+    box(o, yaw, [0, 0, 0], [w, h, d], a.mat, rimLight);
     const [bx, by] = toScreen(o, rotY([0, h, 0], yaw));
     line(C.oak, bx, by, bx, by - 3 * s);
-    rect(a.badge, bx - 1, by - 3 * s - 2, 2, 2);
+    rect(C.white, bx - 1, by - 3 * s - 2, 2, 2);
     if (rotY([0, 0, 1], yaw)[2] < 0.3 || s < 0.5) return; // facing away: no face to see
     const eye = ex => toScreen(o, rotY([ex, h - 3 * s, d / 2], yaw));
     const sleepy = a.action === 'sleep', blink = (t + a.x) % 4 < 0.12;
@@ -1583,22 +1608,70 @@ function drawAgent(a, t) {
   const near = rotY([1, 0, 0], yaw)[2] > 0 ? 1 : -1;
   for (const side of [-1, 1]) {
     let ay = 3, az = 0;
-    if ((a.action === 'wait' || a.happy > 0 || petting) && side === near) ay = 8 + (Math.floor(t * 8) % 2);
+    if ((a.happy > 0 || petting) && side === near) ay = 8 + (Math.floor(t * 8) % 2);
+    if (a.action === 'wait' && side === near) ay = onCall(a) ? 8 : 6 + (Math.floor(t * 3) % 2) * 3;
     if (a.action === 'dance' && (side > 0) === !!beat) ay = 9;
     if (a.action === 'stretch') ay = 10;
     if (typing) { ay = 4 + ((Math.floor(t * 10) + (side > 0 ? 1 : 0)) % 2) * 2; az = 3; }
     const pos = [side * (w / 2 + s), ay * s, az * s];
-    parts.push({ z: depth(pos, yaw), draw: () => box(o, yaw, pos, [2 * s, 3 * s, 3 * s], MAT.claude) });
+    parts.push({ z: depth(pos, yaw), draw: () => box(o, yaw, pos, [2 * s, 3 * s, 3 * s], a.mat) });
   }
   parts.sort((p, q) => p.z - q.z).forEach(p => p.draw());
 
   // Status bubble: "!" when it needs you, "..." when thinking, "<>" or "$" while waiting for a free computer
   const top = toScreen(o, rotY([0, h, 0], yaw))[1] - 10 * s;
-  if (a.action === 'wait' && Math.floor(t * 2) % 2) text(C.amber, '!', feet.x - 1, top - 2);
+  if (onCall(a)) {
+    drawHandset(a, o, yaw, w, h, s);
+    const word = Math.floor(t / 1.2) % 2 ? 'OK?' : '?';
+    rect(C.navy, feet.x - word.length * 2 - 1, top - 3, word.length * 4 + 1, 7);
+    text(C.amber, word, feet.x - word.length * 2, top - 2);
+  } else if (a.action === 'wait' && Math.floor(t * 2) % 2) text(C.amber, '!', feet.x - 1, top - 2);
   if (a.action === 'think' || a.action === 'busy') {
     const word = a.action === 'busy' ? (a.activity === 'run' ? '$' : '<>') : '.'.repeat(1 + Math.floor(t * 2) % 3);
     text(a.action === 'busy' ? C.amber : C.white, word, feet.x - word.length * 2, top - 2);
   }
+}
+
+// The intercom: a little side table with a phone set, a screen and an antenna light.
+// It lights up and shows ASK when a session needs your approval or has a question.
+function drawComm(t) {
+  const x = COMM.x, calling = callQueue().some(a => a.arrived);
+  rect(C.wood, x, 156, 26, 2);
+  rect(C.oak, x, 156, 26, 1);
+  rect(C.wood, x + 2, 158, 2, 10);
+  rect(C.wood, x + 22, 158, 2, 10);
+  rect(C.wood, x + 2, 166, 22, 1);
+
+  rect(C.navy, x + 3, 147, 20, 9);
+  rect(C.blue, x + 3, 147, 20, 1);
+  rect(C.night, x + 5, 149, 13, 6);
+  if (calling) { if (Math.floor(t * 3) % 2) text(C.amber, 'ASK', x + 6, 150); }
+  else { text(C.green, 'OK', x + 6, 150); }
+  for (let k = 0; k < 3; k++) for (let j = 0; j < 2; j++) dot(C.blue, x + 19.5 + j, 149.5 + k * 1.5); // speaker grille
+
+  // handset resting on its cradle unless someone is using it
+  if (!callQueue().some(onCall)) {
+    rect(C.navy, x + 5, 144.5, 14, 2.5);
+    rect(C.blue, x + 5, 144.5, 14, 0.5);
+    rect(C.navy, x + 4, 145.5, 2, 2);
+    rect(C.navy, x + 18, 145.5, 2, 2);
+  }
+  // antenna with a beacon: slow green when all is well, fast amber when someone is asking
+  line(C.blue, x + 21, 147, x + 21, 139);
+  const on = calling ? Math.floor(t * 4) % 2 : Math.sin(t * 2) > 0.3;
+  if (on) rect(calling ? C.amber : C.green, x + 20.5, 137.5, 1.5, 1.5);
+}
+
+// The caller holds the handset to its head; a curly cord runs back to the intercom
+function drawHandset(a, o, yaw, w, h, s) {
+  const [hx, hy] = toScreen(o, rotY([-(w / 2 + 2 * s), h - 2 * s, 1], yaw));
+  const jack = [COMM.x + 19, 154];
+  for (let i = 0; i <= 12; i++) {
+    const k = i / 12, sag = Math.sin(k * Math.PI) * 4;
+    dot(C.navy, jack[0] + (hx - jack[0]) * k + Math.sin(i * 2.3) * 0.5, jack[1] + (hy + 2 - jack[1]) * k + sag);
+  }
+  rect(C.navy, hx - 1, hy - 1, 2, 5);
+  rect(C.blue, hx - 1, hy - 1, 2, 0.5);
 }
 
 function drawPops() {
@@ -1649,6 +1722,7 @@ function draw(t) {
   drawTank(t);
   drawCup();
   for (const a of agents) if (a.level === 'desk') drawAgent(a, t);
+  drawComm(t);
   drawCat(t);
   for (const a of agents) if (a.level === 'floor') drawAgent(a, t);
   drawPops();
@@ -1709,6 +1783,7 @@ canvas.addEventListener('pointerdown', e => {
     a.spin = 2 * Math.PI;
     if (FREE_ACTIONS.includes(a.action)) startAction(a, pick(['hop', 'dance', 'stretch']));
   }
+  else if (hit(COMM.x, 136, COMM.x + 26, 168)) { const caller = callQueue()[0]; if (caller) showCard(caller, e); }
   else if (Math.abs(x - cat.x) < 9 && y > 152 && y < 171) { if (cat.action === 'sleep') pop('!', cat.x - 1, 146, C.amber); petCat(); }
   else if (hit(TANK.x - 1, TANK.y, TANK.x + TANK.w, TANK.y + TANK.h)) { feedFish(); tapTank(x); }
   else if (hit(PORTAL.x - PORTAL.rx, PORTAL.y - PORTAL.ry, PORTAL.x + PORTAL.rx, PORTAL.y + PORTAL.ry)) world.portalFlare = 1;

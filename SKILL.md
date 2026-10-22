@@ -9,7 +9,8 @@ A pixel room shown in the Claude desktop app's built-in browser panel, where eve
 Code session is a little 3D Claude agent. Agents arrive through a portal when a session starts and
 leave through it when it ends. They use the two computers to write code (CODE) and run commands
 (RUN), show FIX after an error and DONE when finished, read at the bookshelf, browse on the laptop,
-wait with "!" when they need the user and sleep on the desk when idle. In free time they feed the
+go to the intercom to ask the user when they need approval or have a question, and sleep on the
+desk when idle. In free time they feed the
 fish, pet the cat, sip tea, read, watch the sky or high-five each other. The laptop counts the open
 tabs (sessions). The clock and the window follow Bangkok time and weather. In a tall panel the
 sessions are listed under the room.

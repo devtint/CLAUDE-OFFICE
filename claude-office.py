@@ -36,7 +36,7 @@ def state(tracker):
             step = ''
             if s.recent:
                 ts, tname, target = s.recent[-1]
-                step = pet.step_text(tname, target, st == 'working')
+                step = pet.step_text(tname, target, st in ('working', 'waiting'))  # still open while it waits
             out.append({
                 'id': s.path,
                 'parent': s.parent.path if s.parent else '',

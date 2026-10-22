@@ -18,7 +18,7 @@ import webbrowser
 HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = 7788
 URL = f'http://127.0.0.1:{PORT}/?app'  # ?app: the window closes itself when the office is stopped
-SIZE = '--window-size=440,760'
+SIZE = '--window-size=720,620'  # the room on top, the session list below
 
 
 def running():

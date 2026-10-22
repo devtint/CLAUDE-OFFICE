@@ -20,7 +20,7 @@ ERROR_LOG = os.path.join(HERE, 'office-error.log')
 ACTIVE_SECS = 30 * 60   # a session gets a Claude while its transcript changed in the last 30 min
 DAY = 36 * 3600         # only transcripts changed this recently are read
 WAIT_SECS = 45          # one step running this long: Claude may be waiting for you
-MAX_PETS = 6
+MAX_PETS = 8          # the room has space for eight Claudes
 MAX_HELPERS = 6
 
 BG = '#1f1e1d'
@@ -47,6 +47,7 @@ TOOL_WORDS = {
     'WebSearch': 'Searching the web', 'WebFetch': 'Reading a web page',
     'SubagentHandback': 'Reporting back', 'ToolSearch': 'Loading tools', 'Skill': 'Using a skill',
     'Agent': 'Calling a helper', 'Task': 'Calling a helper', 'Artifact': 'Publishing a page',
+    'AskUserQuestion': 'Asking you a question', 'ExitPlanMode': 'Waiting for you to approve a plan',
 }
 PAST_WORDS = {
     'Bash': 'Ran a command', 'PowerShell': 'Ran a command',
@@ -55,6 +56,7 @@ PAST_WORDS = {
     'WebSearch': 'Searched the web', 'WebFetch': 'Read a web page',
     'Agent': 'Called a helper', 'Task': 'Called a helper', 'Artifact': 'Published a page',
     'SubagentHandback': 'Reported back', 'ToolSearch': 'Loaded tools', 'Skill': 'Used a skill',
+    'AskUserQuestion': 'Asked you', 'ExitPlanMode': 'Shared a plan',
 }
 NO_COLON = ('Edit', 'Write', 'NotebookEdit', 'Read')  # 'Edited app.js', not 'Edited: app.js'
 KINDS = {
@@ -62,6 +64,10 @@ KINDS = {
     'Read': 'Reads', 'Grep': 'Searches', 'Glob': 'Searches', 'WebSearch': 'Web', 'WebFetch': 'Web',
     'Agent': 'Helpers', 'Task': 'Helpers',
 }
+# tools that stop and wait for you to answer, so the session needs you straight away
+ASK_TOOLS = ('AskUserQuestion', 'ExitPlanMode')
+# a transcript line worth parsing: a user or assistant message, compact or spaced JSON
+MESSAGE_LINE = re.compile(rb'"type"\s*:\s*"(?:user|assistant)"')
 # helpers
 
 def tool_word(name):
@@ -114,6 +120,8 @@ def describe(name, inp):
         target = os.path.basename(str(path).rstrip('/\\'))
     elif inp.get('description'):
         target = inp['description']
+    elif isinstance(inp.get('questions'), list) and inp['questions'] and isinstance(inp['questions'][0], dict):
+        target = inp['questions'][0].get('question') or ''  # AskUserQuestion: the first question
     elif inp.get('pattern'):
         target = inp['pattern']
     elif inp.get('query'):
@@ -225,7 +233,7 @@ class Session:
                 for tid, status in re.findall(rb'<tool-use-id>([^<]+)</tool-use-id>.*?<status>([a-z]+)</status>', line):
                     if status != b'running':
                         self.done_ids.add(tid.decode())
-            if b'"type":"user"' not in line and b'"type":"assistant"' not in line:
+            if not MESSAGE_LINE.search(line):
                 continue
             try:
                 d = json.loads(line)
@@ -311,6 +319,8 @@ class Session:
             tools = [x for x in items if x.get('type') == 'tool_use']
             if tools:
                 name = tools[-1].get('name', '')
+                if name in ASK_TOOLS:  # a question or a plan to approve: it needs you now
+                    return 'waiting', name
                 # waiting on its own helper is normal work, not waiting for you
                 busy_helper = name in ('Agent', 'Task') or now - self.helper_mtime < 30
                 return ('waiting' if age > WAIT_SECS and not busy_helper else 'working'), name
