@@ -25,11 +25,25 @@ Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packag
 - **The intercom:** when a session needs your approval or asks you a question, its Claude goes to
   the intercom by the window, sits down with the handset and asks "OK?". The beacon flashes and the
   screen shows `ASK`; others who need you queue beside it. Tap the intercom to see what it is
-  asking. Questions (`AskUserQuestion`) and plans to approve (`ExitPlanMode`) count straight away;
-  any other step counts after it has waited 45 seconds.
+  asking, or tap it when nobody is calling to turn on a soft chime and a desktop notification
+  for when someone needs you. Questions (`AskUserQuestion`) and plans to approve (`ExitPlanMode`)
+  count straight away. With the hooks installed (below), permission prompts count the moment they
+  appear; without them, a step that has waited 45 seconds counts.
 - **The rest of the room:** reading files sends an agent to the bookshelf, web tools to the
   laptop and thinking shows `...`. Idle sessions sleep on the edge of the desk.
 - **The laptop** counts the open tabs (sessions), with a dot for what each one is doing.
+- **The whiteboard** shows the task list of the session that planned most recently (from
+  `TodoWrite` or the task tools), with checks, the current item and a progress bar; the Claude
+  writes on it while it plans.
+- **Tests, commits and pushes:** a computer's light turns green when its session's tests pass and
+  blinks amber when they fail, and the Claude cheers or winces. A push sends the Claude to the
+  portal with a parcel ("SENT"). The CODE screen shows the file and the lines changed (+12 -3).
+- **Today**, under the clock: turns finished, commits and pushes, tests passed and failed, and a dot
+  in the colour of the busiest model. The wall calendar shows the date.
+- **Little signs:** a Claude whose context is over 80% full walks slower and yawns, naps for a moment
+  after the conversation is compacted, and stomps on a bug after three errors in a row. Background
+  commands light up the Raspberry Pi. Mail tools send a Claude to the mailbox, calendar tools to
+  the calendar, and teammates on the same project chat in their free time.
 - **Free time** after a task: feed or tap the fish tank, pet the cat, sip tea, read a book,
   watch the sky (more often when it rains), stretch, dance or high-five another free agent.
 - **A live window:** the clock, sun, moon (in its real phase), stars and city lights follow
@@ -82,12 +96,19 @@ On Windows (PowerShell):
 git clone https://github.com/devtint/CLAUDE-OFFICE "$env:USERPROFILE\.claude\skills\claude-office"
 ```
 
-Then make the two desktop shortcuts:
+Then make the two desktop shortcuts, and if you like, add the office hooks:
 
 ```bash
 cd ~/.claude/skills/claude-office
-python3 install.py        # on Windows: python install.py
+python3 install.py           # on Windows: python install.py
+python3 install.py --hooks   # optional: exact "needs you" and "done"
 ```
+
+The hooks make Claude Code tell the office the moment a session shows a permission prompt or
+finishes a turn. They are two tiny entries in `~/.claude/settings.json` (a backup is kept as
+`settings.json.office-backup`) that run `office-hook.py` only on those events; it writes one small
+file and costs no tokens. `install.py --uninstall-hooks` removes them and leaves your other
+settings as they were.
 
 | Shortcut | What it does |
 |---|---|
@@ -124,7 +145,9 @@ Add these to the address to try things out:
 ## How it works
 
 - `tracker.py` reads the session transcripts once a second (only those changed in the last 36 hours)
-  and works out each session's model, state, current tool and recent steps.
+  and works out each session's model, state, current tool, recent steps, task list, tests, commits and
+  pushes. A session stays in the room while its transcript changed in the last 10 minutes.
+- `office-hook.py` is the optional Claude Code hook (see Install).
 - `claude-office.py` is a small local server on `127.0.0.1:7788`. It serves the room and `/state`
   (the sessions as JSON). It only listens on your own computer, and only one runs at a time.
 - `workspace.html` is the room: a 320x180 pixel canvas scaled up crisp, drawn in eight colours with

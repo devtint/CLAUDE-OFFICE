@@ -65,6 +65,8 @@ when the server stops; the side panel keeps its last picture.
 
 - `claude-office.py`: the local server (port 7788), `/state` gives the sessions as JSON.
 - `tracker.py`: reads the transcripts (taken from the Claude Pet box so this skill stands alone).
+- `office-hook.py`: the optional Claude Code hook; `python install.py --hooks` adds it, `--uninstall-hooks`
+  removes it. With it, permission prompts and finished turns show in the room at once.
 - `open-office.pyw`: the launcher the shortcuts and the commands above use.
 - `install.py`: makes or removes the desktop shortcuts. Icons are in `icons/`.
 - `workspace.html`: the room (`/`), the only page.

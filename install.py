@@ -2,7 +2,10 @@
 # "Claude Office Off" (stop). Works out every path when it runs, so it suits any computer.
 #   python install.py               make the shortcuts (Windows .lnk, macOS .app, Linux .desktop)
 #   python install.py --uninstall   remove them
+#   python install.py --hooks       add the office hooks to Claude Code (exact "needs you" and "done")
+#   python install.py --uninstall-hooks   remove the hooks again
 # Run it again after moving this folder.
+import json
 import os
 import plistlib
 import shutil
@@ -111,7 +114,70 @@ def linux(folder, remove):
         print('made', path)
 
 
+# ---------- Claude Code hooks ----------
+# The hook runs only on notifications (a permission prompt, or waiting for input) and when a turn
+# finishes. It writes a tiny file the tracker reads; it never calls Claude, so it costs no tokens.
+
+SETTINGS = os.path.join(os.path.expanduser('~'), '.claude', 'settings.json')
+HOOK_SCRIPT = os.path.join(HERE, 'office-hook.py')
+HOOK_EVENTS = ('Notification', 'Stop')
+MARKER = os.path.join(os.path.expanduser('~'), '.claude', 'office-hooks', '.installed')
+
+
+def hook_command():
+    py = sys.executable
+    if os.name == 'nt':  # pythonw: no console window flashing up
+        w = os.path.join(os.path.dirname(py), 'pythonw.exe')
+        py = w if os.path.exists(w) else py
+    return f'"{py}" "{HOOK_SCRIPT}"'
+
+
+def is_ours(entry):
+    return any('office-hook.py' in str(h.get('command', '')) for h in entry.get('hooks', []))
+
+
+def set_hooks(add):
+    """Adds or removes the office hooks in ~/.claude/settings.json, keeping everything else as it is."""
+    settings = {}
+    if os.path.exists(SETTINGS):
+        try:
+            with open(SETTINGS, encoding='utf-8') as fh:
+                settings = json.load(fh)
+        except ValueError:
+            print('could not read', SETTINGS, '(it is not valid JSON), so it was left unchanged')
+            return
+        backup = SETTINGS + '.office-backup'
+        if add and not os.path.exists(backup):
+            shutil.copy2(SETTINGS, backup)
+    hooks = settings.setdefault('hooks', {})
+    for event in HOOK_EVENTS:
+        kept = [e for e in hooks.get(event, []) if not is_ours(e)]
+        if add:
+            kept.append({'hooks': [{'type': 'command', 'command': hook_command()}]})
+        if kept:
+            hooks[event] = kept
+        else:
+            hooks.pop(event, None)
+    if not hooks:
+        settings.pop('hooks', None)
+    os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
+    with open(SETTINGS + '.tmp', 'w', encoding='utf-8') as fh:
+        json.dump(settings, fh, indent=2)
+    os.replace(SETTINGS + '.tmp', SETTINGS)
+    if add:
+        os.makedirs(os.path.dirname(MARKER), exist_ok=True)
+        open(MARKER, 'w').close()
+        print('added the office hooks to', SETTINGS)
+    else:
+        if os.path.exists(MARKER):
+            os.remove(MARKER)
+        print('removed the office hooks from', SETTINGS)
+
+
 def main():
+    if '--hooks' in sys.argv or '--uninstall-hooks' in sys.argv:
+        set_hooks('--hooks' in sys.argv)
+        return
     remove = '--uninstall' in sys.argv
     folder = desktop()
     os.makedirs(folder, exist_ok=True)

@@ -17,7 +17,7 @@ PROJECTS = os.path.join(HOME, '.claude', 'projects')
 HERE = os.path.dirname(os.path.abspath(__file__))
 ERROR_LOG = os.path.join(HERE, 'office-error.log')
 
-ACTIVE_SECS = 30 * 60   # a session gets a Claude while its transcript changed in the last 30 min
+ACTIVE_SECS = 10 * 60   # a session gets a Claude while its transcript changed in the last 10 min
 DAY = 36 * 3600         # only transcripts changed this recently are read
 WAIT_SECS = 45          # one step running this long: Claude may be waiting for you
 MAX_PETS = 8          # the room has space for eight Claudes
@@ -68,6 +68,15 @@ KINDS = {
 ASK_TOOLS = ('AskUserQuestion', 'ExitPlanMode')
 # a transcript line worth parsing: a user or assistant message, compact or spaced JSON
 MESSAGE_LINE = re.compile(rb'"type"\s*:\s*"(?:user|assistant)"')
+# commands worth noticing: tests (pass or fail), commits and pushes
+TEST_RE = re.compile(r'\b(pytest|py\.test|unittest|tox|nox|jest|vitest|mocha|rspec|phpunit|ctest|'
+                     r'(npm|pnpm|yarn|bun)( run)? test|go test|cargo test|dotnet test|mvn test|gradle\w* test|'
+                     r'swift test|mix test|deno test)\b')
+COMMIT_RE = re.compile(r'\bgit\b[^|;&\n]*\bcommit\b')
+PUSH_RE = re.compile(r'\bgit\b[^|;&\n]*\bpush\b')
+# the office hooks (install.py --hooks) leave one small file per session here
+HOOKS_DIR = os.path.join(HOME, '.claude', 'office-hooks')
+HOOKS_MARKER = os.path.join(HOOKS_DIR, '.installed')
 # helpers
 
 def tool_word(name):
@@ -206,6 +215,17 @@ class Session:
         self.peak_context = 0
         self.recent = deque(maxlen=14)  # (time, tool name, target)
         self.fake = None      # demo mode: a made-up (state, tool)
+        self.todos = []       # the task list, from TodoWrite or the task tools: {'text', 'status'}
+        self.todo_time = 0
+        self.pending = {}     # tool call id -> 'test', 'commit' or 'push', until its result arrives
+        self.events = []      # (time, kind) for today's numbers: done, commit, push, pass, fail
+        self.test = ''        # the latest test run: 'pass' or 'fail'
+        self.test_time = 0
+        self.edit = None      # the latest edit: {'file', 'added', 'removed'}
+        self.compact_time = 0  # when the conversation was last compacted
+        self.background = []  # when background commands started
+        self.streak = 0       # tool errors in a row
+        self.hook = None      # the latest note from the office hook, if installed
 
     def update(self):
         try:
@@ -233,6 +253,11 @@ class Session:
                 for tid, status in re.findall(rb'<tool-use-id>([^<]+)</tool-use-id>.*?<status>([a-z]+)</status>', line):
                     if status != b'running':
                         self.done_ids.add(tid.decode())
+            if b'compact_boundary' in line:  # the conversation was compacted
+                try:
+                    self.compact_time = parse_ts(json.loads(line).get('timestamp')) or time.time()
+                except ValueError:
+                    pass
             if not MESSAGE_LINE.search(line):
                 continue
             try:
@@ -252,6 +277,8 @@ class Session:
                 for x in items:
                     if x.get('type') == 'tool_result' and 'Async agent launched' not in str(x.get('content'))[:300]:
                         self.done_ids.add(x.get('tool_use_id'))
+                    if x.get('type') == 'tool_result':
+                        self.result(x, ts)
                 if any(x.get('type') == 'tool_result' for x in items):
                     self.errors += sum(1 for x in items if x.get('type') == 'tool_result' and x.get('is_error'))
                 else:
@@ -269,12 +296,15 @@ class Session:
                     self.peak_context = max(self.peak_context, ctx)
             if msg.get('model') and msg['model'] != '<synthetic>':
                 self.model = msg['model']
+            if msg.get('stop_reason') == 'end_turn':
+                self.events.append((ts, 'done'))
             for x in items:
                 if x.get('type') != 'tool_use':
                     continue
                 self.tools.append(ts)
                 inp = x.get('input') or {}
                 name = x.get('name', '')
+                self.notice(name, inp, x.get('id'), ts)
                 self.kinds[kind_of(name)] += 1
                 path = inp.get('file_path') or inp.get('notebook_path')
                 if path and name in ('Edit', 'Write', 'NotebookEdit'):
@@ -282,6 +312,49 @@ class Session:
                 if name in ('Agent', 'Task'):
                     self.agents.append((ts, inp.get('description') or '', inp.get('subagent_type') or ''))
                 self.recent.append((ts,) + describe(name, inp))
+
+    def notice(self, name, inp, tid, ts):
+        """Remembers what the office shows: the task list, edits, tests, commits, background jobs."""
+        if name == 'TodoWrite' and isinstance(inp.get('todos'), list):
+            self.todos = [{'text': str(t.get('content') or t.get('activeForm') or ''), 'status': str(t.get('status') or '')}
+                          for t in inp['todos'] if isinstance(t, dict)][:12]
+            self.todo_time = ts
+        elif name == 'TaskCreate':
+            self.todos = (self.todos + [{'text': str(inp.get('subject') or inp.get('description') or ''), 'status': 'pending'}])[-12:]
+            self.todo_time = ts
+        elif name == 'TaskUpdate' and str(inp.get('taskId', '')).isdigit():
+            i = int(inp['taskId']) - 1
+            if 0 <= i < len(self.todos) and inp.get('status'):
+                self.todos[i]['status'] = str(inp['status'])
+                self.todo_time = ts
+        elif name in ('Edit', 'Write', 'MultiEdit', 'NotebookEdit'):
+            edits = inp.get('edits') if isinstance(inp.get('edits'), list) else [inp]
+            edits = [e for e in edits if isinstance(e, dict)]
+            lines = lambda v: len(str(v).splitlines()) if v else 0
+            path = inp.get('file_path') or inp.get('notebook_path') or ''
+            self.edit = {'file': os.path.basename(str(path)),
+                         'added': sum(lines(e.get('new_string') or e.get('content') or e.get('new_source')) for e in edits),
+                         'removed': sum(lines(e.get('old_string')) for e in edits)}
+        elif name in ('Bash', 'PowerShell'):
+            cmd = str(inp.get('command') or '')
+            kind = 'push' if PUSH_RE.search(cmd) else 'commit' if COMMIT_RE.search(cmd) else 'test' if TEST_RE.search(cmd) else ''
+            if kind and tid:
+                self.pending[tid] = kind
+            if inp.get('run_in_background'):
+                self.background.append(ts)
+
+    def result(self, x, ts):
+        """A tool result: counts error streaks and finishes tests, commits and pushes."""
+        err = bool(x.get('is_error'))
+        self.streak = self.streak + 1 if err else 0
+        kind = self.pending.pop(x.get('tool_use_id'), '')
+        if kind == 'test':
+            self.test, self.test_time = ('fail' if err else 'pass'), ts
+            self.events.append((ts, self.test))
+        elif kind and not err:
+            self.events.append((ts, kind))
+        if len(self.events) > 400:
+            self.events = self.events[-300:]
 
     @property
     def helper(self):
@@ -312,6 +385,16 @@ class Session:
             return 'done', ''
         if not d or age > ACTIVE_SECS:
             return 'off', ''
+        # the office hook knows for sure, as long as nothing was written after it
+        h = self.hook
+        if h and h.get('time', 0) >= self.mtime - 2:
+            text = (str(h.get('type', '')) + ' ' + str(h.get('message', ''))).lower()
+            if h.get('event') == 'Notification' and 'permission' in text:
+                items = (d.get('message') or {}).get('content')
+                tools = [x for x in (items if isinstance(items, list) else []) if x.get('type') == 'tool_use']
+                return 'waiting', tools[-1].get('name', '') if tools else ''
+            if h.get('event') == 'Stop' or 'waiting for your input' in text or 'idle' in text:
+                return 'done', ''
         msg = d.get('message') or {}
         content = msg.get('content')
         if d['type'] == 'assistant':
@@ -323,7 +406,9 @@ class Session:
                     return 'waiting', name
                 # waiting on its own helper is normal work, not waiting for you
                 busy_helper = name in ('Agent', 'Task') or now - self.helper_mtime < 30
-                return ('waiting' if age > WAIT_SECS and not busy_helper else 'working'), name
+                # with the hooks installed a permission prompt is reported exactly, so a long step is just work
+                guess = age > WAIT_SECS and not busy_helper and not os.path.exists(HOOKS_MARKER)
+                return ('waiting' if guess else 'working'), name
             if msg.get('stop_reason') == 'end_turn':
                 return 'done', ''
             return ('thinking' if age < 180 else 'off'), ''
@@ -395,6 +480,7 @@ class Tracker(threading.Thread):
                             self.scan_helpers(s, now)
                 except Exception:
                     log_error()
+        self.read_hooks(now)
         with self.lock:
             mains = sorted((s for s in self.sessions.values() if not s.helper), key=lambda s: -s.mtime)
             active = [s for s in mains if now - s.mtime < ACTIVE_SECS][:MAX_PETS]
@@ -410,6 +496,28 @@ class Tracker(threading.Thread):
                         helpers.append(s)
             helpers.sort(key=lambda s: s.started)
             self.snapshot = (active + helpers[:MAX_HELPERS], mains[0] if mains else None)
+
+    def read_hooks(self, now):
+        """Notes from the office hook: one small file per session; day-old ones are tidied away."""
+        try:
+            files = [f for f in os.scandir(HOOKS_DIR) if f.name.endswith('.json')]
+        except OSError:
+            return
+        with self.lock:
+            by_path = {os.path.normcase(os.path.abspath(p)): s for p, s in self.sessions.items()}
+        for f in files:
+            try:
+                if now - f.stat().st_mtime > DAY:
+                    os.remove(f.path)
+                    continue
+                with open(f.path, encoding='utf-8') as fh:
+                    note = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            s = by_path.get(os.path.normcase(os.path.abspath(str(note.get('transcript') or ''))))
+            if s:
+                with self.lock:
+                    s.hook = note
 
     def scan_helpers(self, main, now):
         """Subagent transcripts live in a folder named after the session."""

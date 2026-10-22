@@ -56,8 +56,36 @@ def state(tracker):
                 'kinds': dict(s.kinds),                      # every tool call so far, by kind
                 'rate': sum(1 for t in s.tools if now - t < 600),  # steps in the last 10 minutes
                 'newest': s is newest,
+                # for the room: the task list, the latest edit and test, commits and pushes, and more
+                'todos': s.todos[:8],
+                'todo_age': round(now - s.todo_time) if s.todo_time else None,
+                'edit': s.edit,
+                'test': s.test,
+                'test_age': round(now - s.test_time) if s.test_time else None,
+                'commits': sum(1 for _, k in s.events if k == 'commit'),
+                'pushes': sum(1 for _, k in s.events if k == 'push'),
+                'compacted': round(now - s.compact_time) if s.compact_time else None,
+                'background': sum(1 for b in s.background if now - b < 900),
+                'streak': s.streak,
             })
-    return {'claudes': out, 'ready': tracker.ready}
+        today = day_numbers(tracker.sessions.values())
+    return {'claudes': out, 'ready': tracker.ready, 'today': today, 'hooks': os.path.exists(pet.HOOKS_MARKER)}
+
+
+def day_numbers(sessions):
+    """Today's numbers across every session read: turns done, commits, pushes, tests, busiest model."""
+    midnight = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))
+    counts, steps = {'done': 0, 'commit': 0, 'push': 0, 'pass': 0, 'fail': 0}, {}
+    for s in sessions:
+        for ts, kind in s.events:
+            if ts >= midnight and kind in counts:
+                counts[kind] += 1
+        n = sum(1 for ts in s.tools if ts >= midnight)
+        if n:
+            colour = pet.model_info(s.model or (s.parent.model if s.parent else ''))[1]
+            steps[colour] = steps.get(colour, 0) + n
+    counts['top'] = max(steps, key=steps.get) if steps else ''
+    return counts
 
 
 class Handler(BaseHTTPRequestHandler):
