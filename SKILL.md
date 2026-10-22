@@ -1,23 +1,23 @@
 ---
 name: claude-office
-description: Start, show or stop the Claude office, a pixel open-plan office inside the Claude desktop app's side panel where every active Claude Code session has a desk pod. Use when the user says "start the office", "show the office", "open Claude office", "stop the office", "close the office", "mini pet" or "pet in the sidebar".
+description: Start, show or stop the Claude office, a pixel room inside the Claude desktop app's side panel where every active Claude Code session is a little Claude agent. Use when the user says "start the office", "show the office", "open Claude office", "stop the office", "close the office", "mini pet" or "pet in the sidebar".
 ---
 
 # Claude office
 
-A pixel open-plan office shown in the Claude desktop app's built-in browser panel, shared by every
-active Claude Code session. The back wall has the shared facilities (bookshelf, search cabinet, tool
-rack, whiteboard, calendar, mailbox, browser screen, web globe, design easel) and the door. Each
-session gets a desk pod on a rug in its model's colour (code desk and terminal, plus spare desks when
-it is busy, where its helpers sit), labelled with the project, state and current step. The lounge at
-the front has the huddle table, coffee and couches. Claudes walk through the aisles to the station
-for the tool they are running, go to the whiteboard to think, wait at their desk with "!" when they
-need the user, sleep at their desk when idle, and take a break when a task is done: coffee first,
-then random things (couch, plant, reading, doodling, stretching, a little dance). The office scales
-to the panel and adds pod columns when it is wide.
+A pixel room shown in the Claude desktop app's built-in browser panel, where every active Claude
+Code session is a little 3D Claude agent. Agents arrive through a portal when a session starts and
+leave through it when it ends. They use the two computers to write code (CODE) and run commands
+(RUN), show FIX after an error and DONE when finished, read at the bookshelf, browse on the laptop,
+wait with "!" when they need the user and sleep on the desk when idle. In free time they feed the
+fish, pet the cat, sip tea, read, watch the sky or high-five each other. The laptop counts the open
+tabs (sessions). The clock and the window follow Bangkok time and weather. In a tall panel the
+sessions are listed under the room.
 
 It runs a small local server that only reads the transcripts in `~/.claude/projects`, so it costs
-no tokens while it runs. Only one server runs at a time, so the start command is always safe to run.
+no tokens while it runs. The page's only outside request is the Bangkok weather from Open-Meteo
+(add `?noweather` to turn it off). Only one server runs at a time, so the start command is always
+safe to run.
 
 ## Start or show
 
@@ -38,8 +38,7 @@ python3 ~/.claude/skills/claude-office/open-office.pyw --server
 Then open `http://127.0.0.1:7788` with the built-in browser's `preview_start` tool (`url` only, no
 launch.json needed).
 
-Other pages: `http://127.0.0.1:7788/?demo` (a made-up busy office), `/rooms` (the older view with
-one room per session, also takes `?demo`) and `/simple` (a plain strip of Claudes with a status list).
+To try it without sessions: `http://127.0.0.1:7788/?demo` (made-up sessions that come and go).
 
 ## Stop
 
@@ -67,6 +66,5 @@ when the server stops; the side panel keeps its last picture.
 - `tracker.py`: reads the transcripts (taken from the Claude Pet box so this skill stands alone).
 - `open-office.pyw`: the launcher the shortcuts and the commands above use.
 - `install.py`: makes or removes the desktop shortcuts. Icons are in `icons/`.
-- `workspace.html`: the shared office (`/`). `office.html`: one room per session (`/rooms`).
-  `mini.html`: the plain strip (`/simple`).
+- `workspace.html`: the room (`/`), the only page.
 - Errors are kept in `office-error.log` next to the scripts.

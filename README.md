@@ -1,31 +1,41 @@
 # Claude Office
 
-A pixel open-plan office where every active [Claude Code](https://claude.com/claude-code) session
-gets its own desk pod. The Claudes walk to the bookshelf to read, to the terminal rack to run
-commands and to the whiteboard to think. They wait at their desk with "!" when they need you, and
-take a coffee break in the lounge when a task is done.
+A pixel room where every active [Claude Code](https://claude.com/claude-code) session is a little
+3D Claude agent. Agents come in through a portal when a session starts and leave through it when the
+session ends. They take one of the two computers to write code or run commands, read at the
+bookshelf, browse on the laptop, wait with "!" when they need you, and spend their free time with
+the office cat, the fish tank, a cup of tea and the view.
 
 It only reads the transcripts Claude Code already saves in `~/.claude/projects`. It never calls
-Claude or any server, so **it costs no tokens and does not touch your usage limits.**
+Claude, so **it costs no tokens and does not touch your usage limits.**
 
 Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packages to install.
 
-![The office with three sessions](docs/office-wide.png)
+![The room with three sessions](docs/office-wide.png)
 
 ## Features
 
-- One desk pod per active session, on a rug in its model's colour: Opus orange, Sonnet blue,
-  Haiku green, Fable purple. It shows the project, the state, the current step and how long it has run.
-- The shared facilities along the back wall match the tools: bookshelf (reading files), search
-  cabinet (grep and glob), tool rack (commands), whiteboard (thinking), calendar, mailbox,
-  browser screen, web globe and design easel.
-- Subagents sit at the spare desks of their session's pod while they work.
-- States: working, thinking, may need you ("!"), fixing an error, done (coffee break, then the couch,
-  a plant, a book or a little dance), idle (asleep at the desk).
-- Hover a Claude for a card with its step, context use and steps in the last 10 minutes.
-- Scales to any window and adds pod columns when it is wide.
+- **One agent per session.** Each Claude wears an antenna in its model's colour: Opus amber,
+  Sonnet blue, Haiku green, others white. Helpers (subagents) are smaller Claudes.
+- **Two computers** show what the agent at them is doing: `CODE` (Edit, Write) with code being
+  typed, `RUN` (Bash) with a terminal and a progress bar, `FIX` after an error, and `DONE` when the
+  task is finished. The title bar shows the project. When both are taken, the next agent waits by
+  the tank with `<>` or `$` until one is free.
+- **The rest of the room:** reading files sends an agent to the bookshelf, web tools to the
+  laptop, thinking shows `...`, and "may need you" shows a blinking `!` and a wave. Idle sessions
+  sleep on the edge of the desk.
+- **The laptop** counts the open tabs (sessions), with a dot for what each one is doing.
+- **Free time** after a task: feed or tap the fish tank, pet the cat, sip tea, read a book,
+  watch the sky (more often when it rains), stretch, dance or high-five another free agent.
+- **A live window:** the clock, sun, moon (in its real phase), stars and city lights follow
+  Bangkok time (UTC+7), and the sky follows the current Bangkok weather: rain, storms with
+  lightning, fog and clouds.
+- Hover or tap a Claude for its card: model, project, state, current step, turn time and context
+  use. In a tall side panel the sessions are also listed under the room.
+- Tap things: the cat purrs, the tank gets fed, the cup steams, the window gets a shooting star, the
+  clock switches between 24 and 12 hours.
 
-<img src="docs/office.png" width="300" alt="The office in a narrow side panel">
+<img src="docs/office.png" width="300" alt="The room in a narrow side panel, with the session list">
 
 ## Let Claude set it up
 
@@ -51,7 +61,7 @@ Please install Claude Office for me from https://github.com/devtint/CLAUDE-OFFIC
 ```
 
 Claude may ask for your OK before running commands. The office only reads your local session
-files and never sends anything anywhere.
+files and never sends them anywhere.
 
 ## Install
 
@@ -97,22 +107,30 @@ install Python from python.org, then run `install.py` again.
 - **Any browser:** start it with `python3 open-office.pyw --server`, then go to
   <http://127.0.0.1:7788>. Use `--stop` to stop it.
 
-Other pages:
+Add these to the address to try things out:
 
-| Page | What it shows |
+| Option | What it does |
 |---|---|
-| `/?demo` | A made-up busy office, to try it without sessions running |
-| `/rooms` | The older view, with one room per session |
-| `/simple` | A plain strip of Claudes with a status list |
+| `/?demo` | Made-up sessions that come and go, to try it without Claude Code running |
+| `?hour=21` | Shows the sky at another time of day (Bangkok time) |
+| `?weather=storm` | Shows a weather: `clear`, `cloudy`, `overcast`, `fog`, `rain`, `storm` or `snow` |
+| `?noweather` | Turns off the weather request (see below) |
 
 ## How it works
 
 - `tracker.py` reads the session transcripts once a second (only those changed in the last 36 hours)
   and works out each session's model, state, current tool and recent steps.
-- `claude-office.py` is a small local server on `127.0.0.1:7788`. It serves the pages and `/state`
+- `claude-office.py` is a small local server on `127.0.0.1:7788`. It serves the room and `/state`
   (the sessions as JSON). It only listens on your own computer, and only one runs at a time.
-- `workspace.html` draws the office on a canvas and polls `/state`.
+- `workspace.html` is the room: a 320x180 pixel canvas scaled up crisp, drawn in eight colours with
+  a tiny 3D renderer for the agents and the cat. It polls `/state` every 1.5 seconds and turns each
+  session's state and tool into what its agent does. All the animation, physics and free-time
+  behaviour runs in the page.
 - `open-office.pyw` is the launcher, and `install.py` makes the shortcuts.
+
+The one request the page makes outside your computer is the Bangkok weather from
+[Open-Meteo](https://open-meteo.com) (no key, no account, nothing about you or your sessions is
+sent), every 10 minutes. Add `?noweather` to the address to turn it off.
 
 If something goes wrong, the last error is kept in `office-error.log` next to the scripts.
 

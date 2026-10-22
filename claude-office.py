@@ -1,9 +1,9 @@
-# Claude office: a pixel office with one room per active Claude Code session, served as a small
-# web page for the Claude desktop app's side panel (or any browser).
+# Claude office: one pixel room where every active Claude Code session is a Claude agent, served as
+# a small web page for the Claude desktop app's side panel (or any browser).
 # It only reads ~/.claude/projects (see tracker.py) and costs no tokens.
 #   pythonw claude-office.py           start it, then open http://127.0.0.1:7788
 #   pythonw claude-office.py --stop    stop it
-# Pages: / the office, /?demo a made-up busy office, /simple a plain strip of Claudes.
+# Pages: / the room, /?demo the room with made-up sessions.
 # Only one runs at a time: a second start sees the port in use and exits.
 import json
 import os
@@ -19,8 +19,8 @@ sys.path.insert(0, HERE)
 import tracker as pet  # noqa: E402
 
 PORT = 7788
-# / is the shared open-plan office, /rooms one room per session, /simple a plain strip of Claudes
-PAGES = {'/': 'workspace.html', '/rooms': 'office.html', '/simple': 'mini.html'}
+# / is the room; everything happens in that one page
+PAGES = {'/': 'workspace.html'}
 URL = f'http://127.0.0.1:{PORT}'
 
 

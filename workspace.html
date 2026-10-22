@@ -1,625 +1,1742 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Claude Office</title>
 <style>
-  :root { --bg: #1f1e1d; --text: #f0eee6; --faint: #6f6a62; }
-  @media (prefers-color-scheme: light) {
-    :root:not([data-theme="dark"]) { --bg: #faf9f5; --text: #1f1e1d; --faint: #a39e93; }
+  html, body { margin: 0; height: 100%; background: #0b1026; color: #f1ead8; overflow: hidden;
+    font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  canvas {
+    image-rendering: pixelated; image-rendering: crisp-edges; display: block; flex: none;
+    cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
-  html, body { margin: 0; background: var(--bg); color: var(--text);
-    font: 13px/1.4 system-ui, "Segoe UI", sans-serif; }
-  body { padding: 8px; }
-  canvas { display: block; width: 100%; cursor: default; border-radius: 8px; }
-  #tip { position: fixed; pointer-events: none; display: none; background: #2b2926; color: #f0eee6;
-    border: 1px solid #3d3a36; border-radius: 6px; padding: 4px 8px; font-size: 12px; max-width: 260px; }
+  #list { width: 100%; box-sizing: border-box; padding: 6px 14px 14px; overflow-y: auto; display: none; }
+  .row { display: flex; gap: 10px; padding: 7px 0; border-bottom: 1px solid #1a2347; }
+  .dot { flex: none; width: 8px; height: 8px; margin-top: 5px; }
+  .name { color: #f2a33a; }
+  .state { color: #6fa8dc; }
+  .step { color: #f1ead8; opacity: 0.75; word-break: break-word; }
+  .empty { color: #6fa8dc; padding: 10px 0; }
+  #card { position: fixed; display: none; max-width: 260px; z-index: 2; pointer-events: none;
+    background: #1a2347; border: 1px solid #6fa8dc; padding: 7px 9px; }
+  #card div { word-break: break-word; }
 </style>
 </head>
 <body>
-<canvas id="office"></canvas>
-<div id="tip"></div>
+<canvas id="scene"></canvas>
+<div id="list"></div>
+<div id="card"></div>
 <script>
-// One shared open-plan office for every active Claude Code session.
-//   Back wall: shared facilities (bookshelf, search cabinet, tool rack, whiteboard, calendar,
-//   mailbox, browser screen, web globe, design easel) and the door.
-//   Middle: one desk pod per session (code desk and terminal, plus spare desks when it is busy;
-//   helpers sit at the spare desks).
-//   Front: the lounge (huddle table, coffee, couches, plants) for breaks and helper meetings.
-// Claudes walk through the aisles to the station for the tool they are running.
-const canvas = document.getElementById('office'), ctx = canvas.getContext('2d');
-const tip = document.getElementById('tip');
-const BODY = ['..##########..', '..##E####E##..', '..##E####E##..', '##############',
-  '##############', '..##########..', '..##########..'];
-const LEGS = [['..#.#....#.#..', '..#.#....#.#..'], ['...#.#..#.#...', '...#.#..#.#...']];
-const PATS = ['Hi! I am Claude.', 'Back to work!', 'Hehe, that tickles!', 'Thanks for the pat!',
-  'Time for a stretch?', 'Drink some water.'];
-const LABELS = { desk: 'Code desk', desk2: 'Spare desk', desk3: 'Spare desk', desk4: 'Spare desk', terminal: 'Terminal',
-  browser: 'Browser screen', shelf: 'Bookshelf (reading files)', search: 'Search cabinet', globe: 'Web globe',
-  calendar: 'Calendar', mail: 'Mailbox', easel: 'Design easel', rack: 'Tool rack (MCP, skills)',
-  huddle: 'Huddle table (helpers)', board: 'Whiteboard (thinking, planning)', coffee: 'Coffee',
-  couch: 'Couch', couch2: 'Couch', plant: 'Plant', plant2: 'Plant' };
-const WIDTH = { desk: 44, desk2: 44, desk3: 44, desk4: 44, terminal: 40, browser: 48, shelf: 34,
-  search: 28, globe: 28, calendar: 26, mail: 24, easel: 30, rack: 24, huddle: 38, board: 48,
-  coffee: 28, couch: 42, couch2: 42, plant: 22, plant2: 22 };
+// Claude Office: one pixel room shared by every active Claude Code session.
+// Each session is a Claude agent. It comes in through the portal, takes one of the two computers to
+// write code (CODE), run commands (RUN) or fix errors (FIX), reads at the bookshelf, browses on the
+// laptop, waits with "!" when it needs you, and spends free time with the cat, the fish tank, the tea
+// and the window. When the session ends it leaves through the portal.
+// The page polls /state (see claude-office.py). Everything else runs here, so it costs no tokens.
+// URL options: ?demo (made-up sessions), ?hour=21 and ?weather=rain (preview the sky), ?noweather.
 
-// layout, in logical pixels (the canvas is scaled to the panel)
-const WALL = 64, BACK = 94, LANE0 = 124, ROW = 62, M = 10;
-const PW = 180, PGAP = 14, POD_B1 = 74, POD_L1 = 100, POD_B2 = 134, POD_L2 = 160, POD_H1 = 110, POD_H2 = 170;
-const LOUNGE_H = 104;
-const FAC = ['shelf', 'search', 'rack', 'board', 'calendar', 'mail', 'browser', 'globe', 'easel'];
-const FAC_FLOOR = ['easel', 'globe', 'mail', 'rack', 'search'];  // these can stand in a second row
-const MIN_W = 420, MAX_S = 1.6;
-const SLOTS = [0, -16, 16, -32, 32, -48, 48];
-
-let pods = new Map(), order = [], critters = new Map(), spots = {}, items = [], aisles = [], lanes = [];
-let t = 0, hearts = [], W = 420, S = 1, H = 300, last = null, lounge = null;
-
-function stationFor(name) {
-  if (!name) return null;
-  if (/^(Bash|PowerShell|Monitor)$/.test(name)) return 'terminal';
-  if (/^(Edit|Write|NotebookEdit)$/.test(name)) return 'desk';
-  if (name === 'Read') return 'shelf';
-  if (/^(Grep|Glob)$/.test(name)) return 'search';
-  if (/^Web(Search|Fetch)$/.test(name)) return 'globe';
-  if (/Browser|chrome|computer-use/.test(name)) return 'browser';
-  if (/^(Agent|Task|SendMessage)$/.test(name) || /start_session|send_message/.test(name)) return 'huddle';
-  if (/^(Artifact|ArtifactData|ArtifactComments)$/.test(name) || /show_widget|visualize|design/i.test(name)) return 'easel';
-  if (/update_plan|wrap_up|mark_chapter|EnterPlanMode|ExitPlanMode|AskUserQuestion/.test(name)) return 'board';
-  if (/event|calendar|suggest_time/i.test(name)) return 'calendar';
-  if (/mail|draft|thread|label|forward|reply/i.test(name)) return 'mail';
-  if (/spreadsheet|_doc|file|presentation|values/i.test(name)) return 'shelf';
-  return 'rack';
-}
-
-// ---------- drawing helpers ----------
-function R(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h); }
-function txt(s, x, y, c, size = 11, align = 'left', weight = '') {
-  ctx.fillStyle = c; ctx.font = `${weight} ${size}px system-ui, Segoe UI, sans-serif`;
-  ctx.textAlign = align; ctx.fillText(s, x, y);
-}
-function fit(s, w) {
-  if (ctx.measureText(s).width <= w) return s;
-  while (s.length > 1 && ctx.measureText(s + '...').width > w) s = s.slice(0, -1);
-  return s + '...';
-}
-function table(x, b, w) {
-  R(x, b - 18, w, 4, '#9b6b45'); R(x, b - 14, w, 1, '#6e4a30');
-  R(x + 2, b - 14, 3, 14, '#6e4a30'); R(x + w - 5, b - 14, 3, 14, '#6e4a30');
-}
-function monitor(x, y, w, h, screen) {
-  R(x, y, w, h, '#15171a'); R(x + 2, y + 2, w - 4, h - 4, screen);
-  R(x + w / 2 - 2, y + h, 4, 4, '#15171a'); R(x + w / 2 - 6, y + h + 4, 12, 2, '#15171a');
-}
-const CODE = ['#c678dd', '#61afef', '#98c379', '#e5c07b', '#e06c75'];
-
-const DRAW = {
-  desk(x, b, on, ry, n) {
-    table(x, b, 44); monitor(x + 10, b - 40, 24, 16, on ? '#1e2a38' : '#23272c');
-    if (on) for (let i = 0; i < 4; i++) {
-      const w = 4 + ((i * 7 + (t >> 4) + n) % 11);
-      R(x + 13 + (i % 2) * 3, b - 37 + i * 3, Math.min(w, 17 - (i % 2) * 3), 1, CODE[(i + n) % 5]);
-    }
-    R(x + 14, b - 20, 16, 2, '#4b4f56'); R(x + 37, b - 24, 4, 6, '#e8e4dc'); R(x + 41, b - 22, 1, 2, '#e8e4dc');
-  },
-  terminal(x, b, on) {
-    table(x, b, 40); monitor(x + 8, b - 40, 24, 16, '#0b0f0b');
-    const g = on ? '#3fb950' : '#1f4d29';
-    for (let i = 0; i < 3; i++) R(x + 11, b - 37 + i * 3, 4 + ((i * 5 + (on ? t >> 3 : 0)) % 12), 1, g);
-    if (on && (t >> 4) % 2) R(x + 11, b - 28, 3, 2, g);
-    R(x + 12, b - 20, 16, 2, '#4b4f56');
-  },
-  browser(x, b, on) {
-    table(x, b, 48); monitor(x + 6, b - 44, 36, 20, on ? '#eef1f5' : '#34383e');
-    R(x + 8, b - 42, 32, 3, on ? '#c9ced6' : '#2a2d32');
-    if (on) {
-      R(x + 9, b - 41, 1, 1, '#e5484d'); R(x + 11, b - 41, 1, 1, '#e0a43a'); R(x + 13, b - 41, 1, 1, '#3fb950');
-      R(x + 10, b - 37, 12, 2, '#6A9BCC'); R(x + 10, b - 34, 26, 1, '#9aa3ad'); R(x + 10, b - 32, 20, 1, '#9aa3ad');
-      R(x + 10 + ((t >> 3) % 20), b - 30, 2, 2, '#1f1e1d');
-    }
-    R(x + 16, b - 20, 16, 2, '#4b4f56');
-  },
-  shelf(x, b, on) {
-    R(x, b - 54, 34, 54, '#7a5235'); R(x + 2, b - 52, 30, 50, '#4e3423');
-    const cols = ['#c0504d', '#4f81bd', '#9bbb59', '#e0a43a', '#8064a2', '#d97757'];
-    [b - 38, b - 21, b - 4].forEach((rb, s) => {
-      for (let i = 0; i < 7; i++) {
-        if (on && s === 1 && i === ((t >> 5) % 7)) continue;  // a book taken out to read
-        const h = 9 + ((i * 3 + s * 5) % 5);
-        R(x + 3 + i * 4, rb - h, 3, h, cols[(i + s * 2) % cols.length]);
-      }
-      R(x + 2, rb, 30, 2, '#7a5235');
-    });
-  },
-  search(x, b, on) {
-    R(x, b - 36, 28, 36, '#6b7280');
-    for (let i = 0; i < 3; i++) {
-      const out = on && i === ((t >> 5) % 3) ? 3 : 0;
-      R(x + 2 - out, b - 34 + i * 12, 24 + out, 10, '#7d8591'); R(x + 11 - out, b - 30 + i * 12, 6, 2, '#c0c4cc');
-    }
-    const wob = on ? Math.sin(t / 6) * 3 : 0;
-    ctx.strokeStyle = '#e8e4dc'; ctx.lineWidth = 2; ctx.beginPath();
-    ctx.arc(x + 14 + wob, b - 46, 5, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(x + 18 + wob, b - 42); ctx.lineTo(x + 22 + wob, b - 38); ctx.stroke();
-  },
-  globe(x, b, on) {
-    R(x + 13, b - 12, 3, 12, '#7a5235'); R(x + 6, b - 3, 16, 3, '#7a5235');
-    ctx.save(); ctx.beginPath(); ctx.arc(x + 14, b - 23, 10, 0, Math.PI * 2); ctx.fillStyle = '#3b82c4'; ctx.fill();
-    ctx.clip();
-    const off = (t * (on ? 0.4 : 0.04)) % 30;
-    for (let k = -1; k < 2; k++) {
-      const gx = x + 4 + k * 30 + off;
-      R(gx, b - 30, 8, 5, '#5fa35f'); R(gx + 12, b - 24, 6, 8, '#5fa35f'); R(gx + 4, b - 20, 5, 4, '#5fa35f');
-    }
-    ctx.restore();
-    ctx.strokeStyle = '#c9a26b'; ctx.lineWidth = 1; ctx.beginPath();
-    ctx.arc(x + 14, b - 23, 12, Math.PI * 0.75, Math.PI * 2.25); ctx.stroke();
-  },
-  calendar(x, b, on, ry) {
-    const y = ry + 28;
-    R(x + 2, y, 22, 26, '#f5f3ee'); R(x + 2, y, 22, 6, '#d64545');
-    R(x + 7, y - 2, 2, 4, '#555'); R(x + 17, y - 2, 2, 4, '#555');
-    for (let r = 0; r < 4; r++) for (let c = 0; c < 5; c++) {
-      const hit = on && r * 5 + c === ((t >> 4) % 20);
-      R(x + 4 + c * 4, y + 8 + r * 4, 3, 3, hit ? '#d97757' : '#cfcac0');
-    }
-  },
-  mail(x, b, on) {
-    R(x + 10, b - 20, 3, 20, '#555'); R(x + 2, b - 32, 20, 12, '#3b6fb6'); R(x + 2, b - 32, 20, 3, '#2f5c99');
-    R(x + 20, on ? b - 40 : b - 32, 2, 8, on ? '#e5484d' : '#8a8a8a');
-    if (on) { const k = (t >> 2) % 20; R(x + 6 - k * 0.3, b - 36 - k * 0.6, 8, 5, '#f5f3ee'); }
-  },
-  easel(x, b, on) {
-    ctx.strokeStyle = '#8a5a3c'; ctx.lineWidth = 2; ctx.beginPath();
-    ctx.moveTo(x + 15, b - 50); ctx.lineTo(x + 5, b); ctx.moveTo(x + 15, b - 50); ctx.lineTo(x + 25, b);
-    ctx.stroke();
-    R(x + 3, b - 46, 24, 22, '#f5f3ee');
-    const k = on ? (t >> 3) % 4 : 3;
-    R(x + 6, b - 42, 8, 6, '#D97757'); if (k > 0) R(x + 15, b - 40, 9, 4, '#6A9BCC');
-    if (k > 1) R(x + 6, b - 33, 18, 2, '#9aa3ad'); if (k > 2) R(x + 6, b - 30, 12, 2, '#9aa3ad');
-    R(x + 2, b - 24, 26, 2, '#8a5a3c');
-  },
-  rack(x, b, on) {
-    R(x, b - 58, 24, 58, '#1b1d22'); R(x + 1, b - 57, 22, 56, '#24272e');
-    for (let i = 0; i < 7; i++) {
-      R(x + 3, b - 54 + i * 8, 18, 6, '#2e323a');
-      const lit = on ? ((i * 7 + (t >> 2)) % 5) > 1 : i % 3 === 0;
-      R(x + 5, b - 52 + i * 8, 2, 2, lit ? '#3fb950' : '#1f3a26');
-      R(x + 9, b - 52 + i * 8, 2, 2, lit && i % 2 ? '#e0a43a' : '#3a3220');
-    }
-  },
-  huddle(x, b, on) {
-    R(x + 1, b - 9, 6, 2, '#6a4ca8'); R(x + 2, b - 7, 2, 7, '#444'); R(x + 31, b - 9, 6, 2, '#6a4ca8'); R(x + 34, b - 7, 2, 7, '#444');
-    ctx.fillStyle = '#9b6b45'; ctx.beginPath(); ctx.ellipse(x + 19, b - 16, 14, 4, 0, 0, Math.PI * 2); ctx.fill();
-    R(x + 17, b - 14, 4, 14, '#6e4a30'); R(x + 12, b - 1, 14, 1, '#6e4a30');
-    if (on) R(x + 14 + ((t >> 4) % 3) * 3, b - 19, 6, 2, '#f5f3ee');
-  },
-  board(x, b, on, ry) {
-    const y = ry + 24;
-    R(x, y, 48, 34, '#9aa0a8'); R(x + 2, y + 2, 44, 30, '#f7f6f2');
-    const cols = ['#4f81bd', '#c0504d', '#3f9b5a'], n = on ? (t >> 3) % 40 : 40;
-    for (let i = 0; i < 4; i++) R(x + 6, y + 6 + i * 6, Math.max(0, Math.min(30 - i * 5, n - i * 8)), 2, cols[i % 3]);
-    if (n > 30) { ctx.strokeStyle = '#c0504d'; ctx.lineWidth = 1; ctx.strokeRect(x + 34, y + 18, 8, 8); }
-    R(x + 8, y + 34, 32, 2, '#7d838b');
-  },
-  coffee(x, b, on) {
-    R(x, b - 22, 28, 22, '#5c5f66'); R(x, b - 24, 28, 3, '#8a8d94');
-    R(x + 7, b - 40, 14, 16, '#2b2b2b'); R(x + 9, b - 38, 10, 4, '#444'); R(x + 12, b - 29, 5, 4, '#e8e4dc');
-    if (on) for (let i = 0; i < 2; i++) {
-      const k = (t + i * 20) % 40; R(x + 13 + i * 2 + Math.sin(k / 5) * 2, b - 30 - k / 2, 1, 2, `rgba(255,255,255,${0.5 - k / 80})`);
-    }
-  },
-  couch(x, b, on) {
-    R(x, b - 24, 42, 9, '#6a4ca8'); R(x, b - 16, 42, 10, '#7c5cbf');
-    R(x - 1, b - 20, 5, 14, '#5b3f94'); R(x + 38, b - 20, 5, 14, '#5b3f94');
-    R(x + 3, b - 6, 3, 6, '#3a2a5e'); R(x + 36, b - 6, 3, 6, '#3a2a5e');
-  },
-  plant(x, b) {
-    R(x + 5, b - 12, 12, 12, '#b5651d'); R(x + 4, b - 13, 14, 2, '#c97a35');
-    [[10, 24, 3, 12], [5, 20, 5, 4], [13, 22, 6, 4], [7, 28, 4, 5], [12, 30, 4, 6]].forEach(
-      ([dx, dy, w, h]) => R(x + dx, b - dy, w, h, '#4f8f4f'));
-  },
+// Internal resolution: the room is laid out on 320x180 and widens to match wide screens.
+// The canvas has R fine pixels per room pixel, so detailed things (the 3D agents and cat, the fish
+// tank, thin lines) can use half-pixel detail while the rest keeps its chunky look.
+const SCENE_W = 320, H = 180, R = 2;
+let W = SCENE_W;
+const C = {
+  night: '#0b1026', // deep navy (wall, screens)
+  navy:  '#1a2347', // navy (sky, bezels)
+  wood:  '#3d2618', // dark wood brown
+  oak:   '#6b4429', // lighter wood
+  amber: '#f2a33a', // warm amber
+  green: '#3ef07a', // terminal green
+  blue:  '#6fa8dc', // soft blue
+  white: '#f1ead8'  // off white
 };
-DRAW.desk2 = DRAW.desk3 = DRAW.desk4 = DRAW.desk;
 
-function sprite(x, y, colour, leg, eyes, px) {
-  BODY.concat(LEGS[leg]).forEach((row, j) => {
-    for (let i = 0; i < row.length; i++) {
-      const c = row[i]; if (c === '.') continue;
-      R(x + i * px, y + j * px, px, px, c === 'E' && eyes ? '#2b1d16' : colour);
-    }
+const GRAVITY = 300; // pixels per second squared
+const STEP = 1 / 60; // fixed physics step
+const params = new URLSearchParams(location.search);
+
+const canvas = document.getElementById('scene');
+const ctx = canvas.getContext('2d');
+const listEl = document.getElementById('list');
+const card = document.getElementById('card');
+const rand = (a, b) => a + Math.random() * (b - a);
+const pick = list => list[Math.floor(Math.random() * list.length)];
+
+// ---------- Drawing helpers ----------
+
+// Room pixels (each one is R x R fine pixels)
+function rect(color, x, y, w, h) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(x * R), Math.round(y * R), Math.round(w * R), Math.round(h * R));
+}
+
+function px(color, x, y) { rect(color, x, y, 1, 1); }
+
+// Fine pixels: one canvas pixel at a room position, or a rectangle in fine-pixel units
+function dot(color, x, y) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(x * R), Math.round(y * R), 1, 1);
+}
+
+function frect(color, fx, fy, fw = 1, fh = 1) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(fx), Math.round(fy), fw, fh);
+}
+
+// Lines are drawn in fine pixels; width is in fine pixels too
+function line(color, x0, y0, x1, y1, width = 1) {
+  const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 0.5) * R;
+  ctx.fillStyle = color;
+  for (let i = 0; i <= n; i++)
+    ctx.fillRect(Math.round((x0 + (x1 - x0) * i / n) * R), Math.round((y0 + (y1 - y0) * i / n) * R), width, width);
+}
+
+// Rows of centered widths, handy for rounded shapes like clouds
+function blob(color, cx, y, widths, dither = false) {
+  widths.forEach((w, i) => {
+    const x0 = Math.round(cx) - Math.floor(w / 2), yy = Math.round(y) + i;
+    if (!dither) return rect(color, x0, yy, w, 1);
+    for (let x = x0; x < x0 + w; x++) if ((x + yy) % 2 === 0) px(color, x, yy);
   });
 }
-DRAW.couch2 = DRAW.couch; DRAW.plant2 = DRAW.plant;
 
-const LEISURE_SAY = {
-  coffee: ['Ahh, coffee.', 'Coffee break!', 'One more cup.'], couch: ['Time to rest.', 'Feet up.', 'Nap time.'],
-  plant: ['Water for you, plant.', 'Grow, little plant.'], shelf: ['A good book.', 'Light reading.'],
-  board: ['Doodle time.', 'Drawing a cat.'], globe: ['Where next?', 'Holiday ideas.'],
-  stretch: ['Stretch!', 'Good for the back.'], dance: ['Task done!', 'Victory dance!'], wander: ['La la la.', ''],
+// Dithered light: dense checkerboard in the middle, sparse grid at the edge
+function glow(color, cx, cy, rx, ry, core = 0.3) {
+  for (let y = cy - ry; y <= cy + ry; y++)
+    for (let x = cx - rx; x <= cx + rx; x++) {
+      const d = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2;
+      if ((d < core && (x + y) % 2 === 0) || (d < 1 && x % 2 === 0 && y % 2 === 0)) px(color, x, y);
+    }
+}
+
+function rng(seed) {
+  return () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+}
+
+function hash(n) {
+  const s = Math.sin(n * 127.1) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+function hashText(str) {
+  let h = 7;
+  for (const ch of String(str)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h;
+}
+
+// 3x5 pixel font, each glyph is five rows of three bits ('&' heart, '%' note, '*' check mark)
+const FONT = {
+  0: '111101101101111', 1: '010110010010111', 2: '111001111100111', 3: '111001111001111',
+  4: '101101111001001', 5: '111100111001111', 6: '111100111101111', 7: '111001010010010',
+  8: '111101111101111', 9: '111101111001111',
+  A: '010101111101101', B: '110101110101110', C: '011100100100011', D: '110101101101110',
+  E: '111100110100111', F: '111100110100100', G: '011100101101011', H: '101101111101101',
+  I: '111010010010111', J: '001001001101010', K: '101101110101101', L: '100100100100111',
+  M: '101111111101101', N: '110101101101101', O: '010101101101010', P: '110101110100100',
+  Q: '010101101110011', R: '110101110101101', S: '011100010001110', T: '111010010010010',
+  U: '101101101101111', V: '101101101101010', W: '101101111111101', X: '101101010101101',
+  Y: '101101010010010', Z: '111001010100111',
+  ':': '000010000010000', '+': '000010111010000', '-': '000000111000000', '.': '000000000000010',
+  '!': '010010010000010', '?': '111001010000010', '/': '001001010100100', '<': '001010100010001',
+  '>': '100010001010100', '$': '011110010011110', '_': '000000000000111', '=': '000111000111000',
+  '&': '000101111111010', '%': '011010010110110', '*': '000001101010000'
 };
-const LEISURE = ['coffee', 'couch', 'couch2', 'plant', 'plant2', 'shelf', 'board', 'globe', 'wander', 'stretch', 'dance'];
-const FREE_SPOT = ['wander', 'stretch', 'dance'];
-LEISURE_SAY.couch2 = LEISURE_SAY.couch; LEISURE_SAY.plant2 = LEISURE_SAY.plant;
 
-// what Claude holds or does on a break
-function drawProp(cr, kind, y, sw, sh, room) {
-  const hx = cr.x + sw - 2, hy = y + sh * 0.45;
-  if (kind === 'coffee') {
-    const sip = (t % 160) < 30 ? -4 : 0;
-    R(hx, hy + sip, 6, 7, '#e8e4dc'); R(hx + 6, hy + 2 + sip, 2, 3, '#e8e4dc'); R(hx + 1, hy + 1 + sip, 4, 2, '#6b4226');
-    for (let i = 0; i < 2; i++) {
-      const k = (t + i * 18) % 36; R(hx + 2 + i * 2 + Math.sin(k / 4), hy - 2 - k / 3 + sip, 1, 2, `rgba(255,255,255,${0.6 - k / 60})`);
-    }
-  } else if (kind === 'shelf') {
-    R(hx - 2, hy, 10, 8, '#c0504d'); R(hx + 2, hy, 1, 8, '#f5f3ee');
-  } else if (kind === 'plant') {
-    R(cr.x - 10, hy, 9, 6, '#6A9BCC'); R(cr.x - 14, hy - 2, 5, 2, '#6A9BCC');
-    for (let i = 0; i < 3; i++) { const k = (t + i * 7) % 20; R(cr.x - 15 - i, hy + k, 1, 2, '#8cc4ff'); }
-  } else if (kind === 'board') {
-    R(hx, hy - 6, 2, 8, '#c0504d');
-  } else if (kind === 'globe') {
-    if ((t >> 5) % 2) txt('?', cr.x + sw / 2, y - 4, '#d6d3cc', 11, 'center', '700');
-  } else if (kind === 'dance') {
-    const k = t % 60; txt('♪', cr.x + sw + 4 + k / 10, y - k / 4, `rgba(240,238,230,${1 - k / 60})`, 12);
+function text(color, str, x, y, scale = 1) {
+  for (const ch of String(str)) {
+    const g = FONT[ch];
+    if (g) for (let i = 0; i < 15; i++)
+      if (g[i] === '1') rect(color, x + (i % 3) * scale, y + Math.floor(i / 3) * scale, scale, scale);
+    x += 4 * scale;
   }
 }
 
-// ---------- layout ----------
-function addSpot(key, kind, x, b, lane, pod) {
-  const s = { key, kind, x, w: WIDTH[kind] || 24, b, lane, pod };
-  spots[key] = s; items.push(s);
-  return s;
+// Text the pixel font can draw: upper case, known glyphs only
+const pixelText = (str, max) => [...String(str || '').toUpperCase()].map(ch => FONT[ch] ? ch : ' ').join('').trim().slice(0, max);
+
+// A short screen label: the last words of a project name that fit ('Home Tint Pixel Room' -> 'ROOM')
+function shortName(str, max) {
+  const words = pixelText(str, 99).split(/\s+/).filter(Boolean);
+  let out = '';
+  for (let i = words.length - 1; i >= 0; i--) {
+    const next = out ? words[i] + ' ' + out : words[i];
+    if (next.length > max) break;
+    out = next;
+  }
+  return out || (words.pop() || '').slice(0, max);
 }
 
-function spread(keys, x0, x1, b, lane, prefix, pod) {
-  const need = keys.reduce((a, k) => a + WIDTH[k], 0), gap = (x1 - x0 - need) / (keys.length + 1);
-  let x = x0 + gap;
-  keys.forEach(k => { addSpot(prefix + k, k, x, b, lane, pod); x += WIDTH[k] + gap; });
+// ---------- Tiny 3D: shaded boxes projected straight to pixels ----------
+
+const TILT = 0.4; // the camera looks a little down, so top faces show
+const LIGHT = [-0.3, 0.8, 0.5].map(v => v / Math.hypot(0.3, 0.8, 0.5));
+const MAT = {
+  claude: { spark: C.amber, lit: C.amber, dark: C.oak },
+  cat:    { spark: C.white, lit: C.white, dark: C.blue, soft: true } // fur: sparse shading, not a checkerboard
+};
+
+const angleDiff = (a, b) => ((a - b + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+
+function rotY([x, y, z], yaw) {
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  return [x * c + z * s, y, -x * s + z * c];
 }
 
-function layout(claudes) {
-  spots = {}; items = []; lanes = [];
-  const mains = claudes.filter(c => !c.parent);
-  // back wall facilities; floor-standing ones move to a second row when the wall is full
-  const avail = W - 2 * M - 40, need = ks => ks.reduce((a, k) => a + WIDTH[k] + 8, 0);
-  let row0 = FAC.slice(); const row1 = [];
-  for (const k of FAC_FLOOR) { if (need(row0) <= avail) break; row0 = row0.filter(x => x !== k); row1.unshift(k); }
-  spread(row0, M, W - M - 40, BACK, LANE0, '', null);
-  addSpot('door', 'door', W - M - 30, BACK, LANE0, null);
-  lanes.push(LANE0);
-  let y = LANE0 + 14;
-  if (row1.length) { spread(row1, M, W - M, BACK + ROW, LANE0 + ROW, '', null); lanes.push(LANE0 + ROW); y += ROW; }
-  // desk pods
-  const cols = Math.max(1, Math.floor((W - 2 * M + PGAP) / (PW + PGAP)));
-  const pw = (W - 2 * M - (cols - 1) * PGAP) / cols;
-  aisles = [M + 4];
-  for (let c = 1; c < cols; c++) aisles.push(M + c * (pw + PGAP) - PGAP / 2);
-  aisles.push(W - M - 4);
-  for (let r = 0; r * cols < mains.length; r++) {
-    const line = mains.slice(r * cols, r * cols + cols);
-    let lh = POD_H1;
-    line.forEach((m, c) => {
-      const helpers = claudes.filter(h => h.parent === m.id);
-      const extra = Math.min(3, Math.max(Math.floor((m.rate || 0) / 12), helpers.length));
-      const keys = ['desk', 'terminal', 'desk2', 'desk3', 'desk4'].slice(0, 2 + extra);
-      const r1 = [], r2 = [];
-      keys.forEach(k => (r1.length < 3 && need(r1.concat(k)) <= pw - 8 ? r1 : r2).push(k));
-      const pod = { id: m.id, x: M + c * (pw + PGAP), y, w: pw, h: r2.length ? POD_H2 : POD_H1, main: m, helpers };
-      pods.set(m.id, pod);
-      spread(r1, pod.x, pod.x + pw, y + POD_B1, y + POD_L1, m.id + ':', pod);
-      if (r2.length) spread(r2, pod.x, pod.x + pw, y + POD_B2, y + POD_L2, m.id + ':', pod);
-      lanes.push(y + POD_L1); if (r2.length) lanes.push(y + POD_L2);
-      lh = Math.max(lh, pod.h);
+// Model space (y up, z toward the viewer) to screen pixels around origin o
+function toScreen(o, [x, y, z]) { return [o.x + x, o.y - y + z * TILT]; }
+
+// How much a model-space point faces the camera, for depth sorting parts
+const depth = (p, yaw) => rotY(p, yaw)[2];
+
+// Brightness tiers stay inside the palette: sparkle, lit, dithered, dark
+function shade(mat, b, x, y) {
+  if (b > 0.75) return (x + 2 * y) % 5 === 0 ? mat.spark : mat.lit;
+  if (b > 0.35) return mat.lit;
+  if (b > 0.1) return mat.soft ? ((x + 2 * y) % 4 === 0 ? mat.dark : mat.lit) : (x + y) % 2 ? mat.lit : mat.dark;
+  return mat.dark;
+}
+
+// Scanline fill of a convex polygon (room coordinates) in fine pixels.
+// colorAt(x, y, fx, fy) gets the room position of the pixel centre and its fine-pixel index.
+function fillPoly(pts, colorAt) {
+  const P = pts.map(([x, y]) => [x * R, y * R]), ys = P.map(p => p[1]);
+  for (let y = Math.round(Math.min(...ys)); y < Math.round(Math.max(...ys)); y++) {
+    const cy = y + 0.5, xs = [];
+    P.forEach((a, i) => {
+      const b = P[(i + 1) % P.length];
+      if ((a[1] <= cy) !== (b[1] <= cy)) xs.push(a[0] + (cy - a[1]) / (b[1] - a[1]) * (b[0] - a[0]));
     });
-    line.forEach(m => pods.get(m.id).h = lh);
-    y += lh + PGAP;
-  }
-  for (const id of [...pods.keys()]) if (!mains.some(m => m.id === id)) pods.delete(id);
-  // the lounge
-  lounge = { y, h: LOUNGE_H };
-  const many = mains.length > 2 && W > 520;
-  spread(['plant', 'huddle', 'coffee', 'couch'].concat(many ? ['couch2', 'plant2'] : []),
-    M, W - M, y + 64, y + 92, '', null);
-  lanes.push(y + 92);
-  return y + LOUNGE_H;
-}
-
-// ---------- where each Claude goes ----------
-function pickLeisure(cr, first) {
-  const opts = LEISURE.filter(k => FREE_SPOT.includes(k) || spots[k]);
-  let k = first ? 'coffee' : opts[Math.random() * opts.length | 0];
-  if (!first && k === cr.leisure && opts.length > 1) k = opts[(opts.indexOf(k) + 1) % opts.length];
-  cr.leisure = k; cr.leisureT = 300 + Math.random() * 420 | 0; cr.said = false;
-  cr.wx = M + 30 + Math.random() * (W - 2 * M - 60);
-  cr.wy = lanes.length ? lanes[Math.random() * lanes.length | 0] : LANE0;
-}
-
-function goalOf(cr) {
-  const c = cr.info, pod = c.parent || c.id;
-  const own = k => spots[pod + ':' + k] ? pod + ':' + k : pod + ':desk';
-  switch (c.state) {
-    case 'working': {
-      const st = stationFor(c.tool) || 'desk';
-      if (st === 'desk' && c.parent) {  // helpers take the spare desks
-        const free = ['desk2', 'desk3', 'desk4'].filter(k => spots[pod + ':' + k]);
-        return free.length ? pod + ':' + free[cr.idx % free.length] : own('desk');
-      }
-      if (st === 'desk' || st === 'terminal') return own(st);
-      return spots[st] ? st : own('desk');
-    }
-    case 'thinking': return 'board';
-    case 'waiting': return own('desk');
-    case 'error': return own('terminal');
-    case 'off': return c.parent ? own('desk2') : own('desk');
-    case 'done':
-      if (!cr.leisure) pickLeisure(cr, true);
-      return cr.leisure;
-  }
-  return own('desk');
-}
-
-function aim(cr) {
-  cr.goal = goalOf(cr);
-  let tx, ty;
-  if (FREE_SPOT.includes(cr.goal)) { tx = cr.wx; ty = cr.wy; }
-  else {
-    const s = spots[cr.goal] || spots.door;
-    tx = s.x + s.w / 2 + SLOTS[cr.slot % SLOTS.length]; ty = s.lane;
-  }
-  if (cr.tx === tx && cr.ty === ty) return;
-  cr.tx = tx; cr.ty = ty;
-  // walk along the current lane to an aisle, along the aisle, then along the target lane
-  if (Math.abs(cr.y - ty) < 2) cr.path = [[tx, ty]];
-  else {
-    const mid = (cr.x + tx) / 2, ax = aisles.reduce((a, b) => Math.abs(b - mid) < Math.abs(a - mid) ? b : a, aisles[0]);
-    cr.path = [[ax, cr.y], [ax, ty], [tx, ty]];
+    if (xs.length < 2) continue;
+    for (let x = Math.round(Math.min(...xs)); x < Math.round(Math.max(...xs)); x++)
+      frect(colorAt((x + 0.5) / R, cy / R, x, y), x, y);
   }
 }
 
-function sync(claudes) {
-  const mains = claudes.filter(c => !c.parent);
-  mains.forEach(m => { if (!order.includes(m.id)) order.push(m.id); });
-  order = order.filter(id => mains.some(m => m.id === id));
-  const sorted = order.map(id => mains.find(m => m.id === id))
-    .concat(claudes.filter(c => c.parent && order.includes(c.parent)));
-  const h = layout(sorted);
-  const seen = new Set(), used = {};
-  sorted.forEach(c => {
-    seen.add(c.id);
-    let cr = critters.get(c.id);
-    if (!cr) {
-      const d = spots.door;
-      cr = { x: d.x + d.w / 2, y: d.lane, path: [], hop: 0, say: '', sayT: 0, state: c.state };
-      critters.set(c.id, cr);
-    }
-    if (cr.state !== c.state) {
-      if (c.state === 'done') { cr.hop = 14; cr.say = 'Done!'; cr.sayT = 90; cr.leisure = null; }
-      if (c.state === 'waiting') { cr.hop = 12; cr.say = 'Need you!'; cr.sayT = 140; }
-      if (c.state === 'error') { cr.say = 'Oops'; cr.sayT = 70; }
-    }
-    cr.info = c; cr.state = c.state;
-    cr.idx = c.parent ? sorted.filter(x => x.parent === c.parent).indexOf(c) : 0;
-    const g = goalOf(cr);
-    cr.slot = used[g] = (used[g] === undefined ? 0 : used[g] + 1);  // share a station side by side
-    aim(cr);
-  });
-  for (const id of [...critters.keys()]) if (!seen.has(id)) critters.delete(id);
-  if (h !== H) { H = h; resize(); }
+// Where a point lands on a face: u along its first edge, v along its last
+function faceUV(q, x, y) {
+  const [a, b, , d] = q, e1 = [b[0] - a[0], b[1] - a[1]], e2 = [d[0] - a[0], d[1] - a[1]];
+  const det = e1[0] * e2[1] - e1[1] * e2[0], dx = x - a[0], dy = y - a[1];
+  return det ? [(dx * e2[1] - dy * e2[0]) / det, (e1[0] * dy - e1[1] * dx) / det] : [0, 0];
 }
 
-function measure() {
-  const cw = canvas.clientWidth || 300;
-  S = Math.min(MAX_S, cw / MIN_W); W = cw / S;  // W is the logical width
-}
-function resize() {
-  const r = window.devicePixelRatio || 1, cw = canvas.clientWidth || 300;
-  measure();
-  canvas.style.height = H * S + 'px';
-  canvas.width = cw * r; canvas.height = H * S * r;
-  ctx.setTransform(r * S, 0, 0, r * S, 0, 0);
-}
-
-// ---------- drawing ----------
-function rug(x, y, w, h, colour, alpha, border) {
-  ctx.globalAlpha = alpha; R(x, y, w, h, colour); ctx.globalAlpha = 1;
-  ctx.strokeStyle = border; ctx.lineWidth = 1; ctx.strokeRect(Math.round(x) + 0.5, Math.round(y) + 0.5, w - 1, h - 1);
-}
-
-function drawShell() {
-  // wall
-  R(0, 0, W, WALL, '#2f3a46'); R(0, WALL - 4, W, 4, '#26303a');
-  for (let x = 40; x < W; x += 120) R(x, 6, 1, WALL - 12, '#2a333e');  // wall panels
-  // floor
-  for (let fy = WALL, j = 0; fy < H; fy += 10, j++)
-    for (let fx = 0, i = 0; fx < W; fx += 14, i++)
-      R(fx, fy, Math.min(14, W - fx), Math.min(10, H - fy), (i + j) % 2 ? '#4a3f35' : '#443a31');
-  R(0, WALL, W, 2, '#1f262e');
-  // sign and clock
-  ctx.font = '600 11px system-ui, Segoe UI, sans-serif';
-  const n = pods.size, sign = `Claude Office  ${n} session${n === 1 ? '' : 's'}`;
-  const sw = ctx.measureText(sign).width;
-  R(M, 5, sw + 14, 15, '#1b2128'); txt(sign, M + 7, 16, '#f0eee6', 11, 'left', '600');
-  const now = new Date(), clock = now.toTimeString().slice(0, 5);
-  R(W - M - 46, 5, 46, 15, '#1b2128'); txt(clock, W - M - 23, 16, '#e0a43a', 11, 'center', '600');
-  // the door
-  const d = spots.door, open = [...critters.values()].some(c => c.info.state === 'waiting') && (t >> 6) % 2;
-  R(d.x, 34, 24, BACK - 34, '#6e4a30'); R(d.x + 2, 36, 20, BACK - 36, open ? '#151719' : '#8a5a3c');
-  if (!open) R(d.x + 17, 64, 3, 3, '#e0c070');
-  // rugs: one per pod in its session's colour, and the lounge
-  for (const pod of pods.values()) {
-    const warn = pod.main.state === 'waiting' || pod.main.state === 'error';
-    rug(pod.x, pod.y, pod.w, pod.h, pod.main.colour, 0.13, warn && (t >> 5) % 2 ? '#e0a43a' : pod.main.colour + '66');
-  }
-  rug(M, lounge.y, W - 2 * M, LOUNGE_H - 6, '#5f7a55', 0.16, '#5f7a5566');
-  txt('Lounge', M + 6, lounge.y + 13, '#a3b39b', 10, 'left', '600');
-}
-
-function podLabel(pod) {
-  const m = pod.main, x = pod.x + 7, w = pod.w - 14;
-  R(x, pod.y + 6, 5, 5, m.colour);
-  ctx.font = '600 11px system-ui';
-  const name = fit(m.project, w * 0.6);
-  txt(name, x + 9, pod.y + 13, '#f0eee6', 11, 'left', '600');
-  ctx.font = '600 11px system-ui'; const nw = ctx.measureText(name).width;
-  ctx.font = '10px system-ui';
-  txt(fit(m.name, w - nw - 14), x + 14 + nw, pod.y + 13, '#a39e93', 10);
-  const warn = m.state === 'waiting' || m.state === 'error';
-  const head = m.word + (m.turn ? ' ' + m.turn : '');
-  ctx.font = '600 10px system-ui'; const hw = ctx.measureText(head).width + 6;
-  txt(head, x, pod.y + 26, warn ? '#e0a43a' : '#d6d3cc', 10, 'left', '600');
-  ctx.font = '10px system-ui';
-  txt(fit(m.step || '', w - hw), x + hw, pod.y + 26, '#a39e93', 10);
-}
-
-function litSet() {
-  const lit = new Set();
-  for (const cr of critters.values())
-    if (!cr.path.length && cr.info.state !== 'off') lit.add(cr.goal);
-  for (const pod of pods.values())
-    if (pod.main.state === 'working') ['desk2', 'desk3', 'desk4'].forEach(k => lit.add(pod.id + ':' + k));
-  return lit;
-}
-
-function drawCritter(cr) {
-  const c = cr.info, px = c.parent ? 2 : 3, sw = 14 * px, sh = 9 * px;
-  const speed = c.state === 'working' ? 2 : 1.3;
-  if (cr.path.length) {
-    const [px2, py2] = cr.path[0], dx = px2 - cr.x, dy = py2 - cr.y, d = Math.hypot(dx, dy);
-    if (d <= speed) { cr.x = px2; cr.y = py2; cr.path.shift(); }
-    else { cr.x += dx / d * speed; cr.y += dy / d * speed; }
-  }
-  const moving = cr.path.length > 0;
-  if (cr.hop > 0) cr.hop--;
-  const relax = !moving && c.state === 'done' ? cr.goal : '';
-  if (relax) {
-    if (!cr.said && cr.sayT <= 0) {
-      const lines = LEISURE_SAY[relax] || [''], line = lines[Math.random() * lines.length | 0];
-      if (line) { cr.say = line; cr.sayT = 80; }
-      cr.said = true;
-    }
-    if (--cr.leisureT <= 0) { pickLeisure(cr); aim(cr); }
-    if (relax === 'stretch' && cr.leisureT % 90 === 0) cr.hop = 14;
-    if (relax === 'dance' && cr.leisureT % 24 === 0) { cr.hop = 8; cr.x += (cr.leisureT / 24 | 0) % 2 ? 4 : -4; }
-  }
-  const lift = cr.hop > 0 ? Math.sin(cr.hop / 14 * Math.PI) * 10 : 0;
-  const atWork = !moving && c.state === 'working';
-  const bob = atWork ? ((t >> 3) % 2) : c.state === 'thinking' ? Math.sin(t / 10) * 1.5 : 0;
-  const sitting = relax === 'couch' || relax === 'couch2';
-  const asleep = !moving && c.state === 'off';
-  const left = cr.x - sw / 2;
-  const y = (sitting ? cr.y - 36 : cr.y) - sh - lift + (sitting ? Math.sin(t / 30) : bob);
-  const resting = (sitting && cr.leisureT < 240) || asleep;
-  ctx.globalAlpha = c.state === 'off' ? 0.75 : 1;
-  sprite(left, y, c.colour, moving ? (t >> 3) % 2 : 0, !resting && t % 200 > 5, px);
-  ctx.globalAlpha = 1;
-  cr.box = [left, y, sw, sh];
-  if (relax) drawProp({ x: left }, relax, y, sw, sh);
-  if (resting) txt((t >> 5) % 2 ? 'z' : 'Z', left + sw + 2, y - 2, '#a39e93', 10);
-  if (c.state === 'thinking' && !moving)
-    for (let k = 0; k < 3; k++) if ((t / 15 | 0) % 4 > k) R(cr.x - 6 + k * 5, y - 6, 2, 2, '#d6d3cc');
-  if (c.state === 'waiting' && cr.sayT <= 0 && (t >> 4) % 2) txt('!', cr.x, y - 4, '#e0a43a', 14, 'center', '700');
-  if (cr.sayT > 0) {
-    cr.sayT--;
-    ctx.font = '11px system-ui'; const tw = ctx.measureText(cr.say).width + 10;
-    const bx = Math.min(Math.max(cr.x, tw / 2 + 2), W - tw / 2 - 2);
-    R(bx - tw / 2, y - 22, tw, 16, '#f0eee6'); R(bx - 2, y - 6, 4, 3, '#f0eee6');
-    txt(cr.say, bx, y - 10, '#1f1e1d', 11, 'center');
-  }
-}
-
-function frame() {
-  t++;
-  ctx.clearRect(0, 0, W, H);
-  if (!spots.door) { requestAnimationFrame(frame); return; }
-  drawShell();
-  for (const pod of pods.values()) podLabel(pod);
-  const lit = litSet();
-  // back to front: furniture by its base, Claudes by their feet
-  const list = items.filter(s => s.kind !== 'door').map(s => ({ y: s.b, s }))
-    .concat([...critters.values()].map(cr => ({ y: cr.y + 0.5, cr })));
-  list.sort((a, b) => a.y - b.y);
-  list.forEach(o => {
-    if (o.s) { if (DRAW[o.s.kind]) DRAW[o.s.kind](o.s.x, o.s.b, lit.has(o.s.key), 0, items.indexOf(o.s)); }
-    else drawCritter(o.cr);
-  });
-  if (!pods.size) txt('No Claude sessions active in the last 30 minutes.', W / 2, LANE0 + 40, '#a39e93', 12, 'center');
-  hearts = hearts.filter(p => (p.y -= 0.6, p.t--, p.t > 0));
-  hearts.forEach(p => { ctx.globalAlpha = p.t / 40; txt('♥', p.x, p.y, '#e5484d', 11, 'center'); });
-  ctx.globalAlpha = 1;
-  requestAnimationFrame(frame);
-}
-
-// ---------- mouse ----------
-const esc = s => String(s).replace(/[&<>]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[ch]);
-function at(e) {
-  const r = canvas.getBoundingClientRect(), x = (e.clientX - r.left) / S, y = (e.clientY - r.top) / S;
-  for (const cr of critters.values()) {
-    const [bx, by, bw, bh] = cr.box || [];
-    if (x >= bx - 4 && x <= bx + bw + 4 && y >= by - 6 && y <= by + bh + 4) return { cr };
-  }
-  for (const pod of pods.values())
-    if (x >= pod.x && x <= pod.x + pod.w && y >= pod.y && y <= pod.y + 30) return { pod };
-  for (const s of items)
-    if (x >= s.x && x <= s.x + s.w && y >= s.b - 58 && y <= s.b) return { spot: s.kind === 'door' ? 'Door' : LABELS[s.kind] };
-  return null;
-}
-canvas.addEventListener('click', e => {
-  const hit = at(e); if (!hit || !hit.cr) return;
-  const { cr } = hit, [bx, by, bw] = cr.box;
-  cr.hop = 14; cr.say = PATS[Math.random() * PATS.length | 0]; cr.sayT = 90;
-  for (let k = 0; k < 4; k++) hearts.push({ x: bx + bw / 2 + (k - 1.5) * 6, y: by - 4 - k * 3, t: 40 });
-});
-canvas.addEventListener('mousemove', e => {
-  const hit = at(e);
-  canvas.style.cursor = hit && hit.cr ? 'pointer' : 'default';
-  if (!hit) { tip.style.display = 'none'; return; }
-  let html;
-  const card = c => `<b>${esc(c.name)}</b> ${esc(c.parent ? c.desc || 'helper' : c.project)}<br>${esc(c.word)}`
-    + (c.turn ? ' ' + esc(c.turn) : '') + (c.step ? `<br>${esc(c.step)}` : '')
-    + (c.context ? `<br>Context ${esc(c.context)}` : '') + `<br>${c.steps} steps, ${c.rate || 0} in the last 10 min`;
-  if (hit.cr) html = card(hit.cr.info);
-  else if (hit.pod) html = card(hit.pod.main) + (hit.pod.helpers.length ? `<br>${hit.pod.helpers.length} helper(s)` : '');
-  else html = hit.spot;
-  tip.innerHTML = html; tip.style.display = 'block';
-  tip.style.left = Math.min(e.clientX + 12, innerWidth - 270) + 'px'; tip.style.top = (e.clientY + 14) + 'px';
-});
-canvas.addEventListener('mouseleave', () => tip.style.display = 'none');
-window.addEventListener('resize', () => { measure(); if (last) sync(last); resize(); });
-
-// ?demo: made-up sessions that change tools every few seconds, to preview a busy office
-const DEMO_TOOLS = ['Edit', 'Bash', 'Read', 'Grep', 'WebSearch', 'mcp__Claude_Browser__computer', 'Agent',
-  'mcp__calendar__create_event', 'mcp__gmail__create_draft', 'Artifact', 'Skill', 'mcp__ccd_turn__update_plan'];
-function demo() {
-  const k = Math.floor(Date.now() / 4000), pick = n => DEMO_TOOLS[(k + n) % DEMO_TOOLS.length];
-  const states = ['working', 'working', 'working', 'thinking', 'waiting', 'done', 'off'];
-  const mk = (id, name, project, colour, n, extra) => {
-    const state = id === 'a' ? 'working' : states[(k + n) % states.length], tool = state === 'working' ? pick(n) : '';
-    return Object.assign({ id, parent: '', name, project, colour, state, tool, word: state, turn: '2m 10s',
-      step: tool, steps: 40 + n, rate: 6 + n * 7, names: [], kinds: {}, context: '' }, extra);
-  };
-  return [
-    mk('a', 'Opus 5.5', 'Busy Project', '#D97757', 3),
-    mk('b', 'Sonnet 5.5', 'Website', '#6A9BCC', 1),
-    mk('c', 'Haiku 5.5', 'Scripts', '#7FA36B', 4),
-    mk('a1', 'Explore', '', '#D97757', 5, { parent: 'a', desc: 'Find the API routes' }),
-    mk('a2', 'Plan', '', '#D97757', 2, { parent: 'a', desc: 'Plan the refactor' }),
+// A box given by its bottom centre and size, turned by yaw around the model origin.
+// paint(face, u, v, x, y, b) may return a colour to texture a face; otherwise it is shaded.
+function box(o, yaw, [cx, y0, cz], [w, h, d], mat, paint) {
+  const [x0, x1, y1, z0, z1] = [cx - w / 2, cx + w / 2, y0 + h, cz - d / 2, cz + d / 2];
+  const faces = [
+    ['front', [0, 0, 1],  [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]]],
+    ['back',  [0, 0, -1], [[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]]],
+    ['right', [1, 0, 0],  [[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]]],
+    ['left',  [-1, 0, 0], [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]]],
+    ['top',   [0, 1, 0],  [[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]]]
   ];
+  for (const [name, normal, quad] of faces) {
+    const n = rotY(normal, yaw);
+    if (name !== 'top' && n[2] <= 0.02) continue; // facing away from the camera
+    const b = n[0] * LIGHT[0] + n[1] * LIGHT[1] + n[2] * LIGHT[2];
+    const q = quad.map(p => toScreen(o, rotY(p, yaw)));
+    fillPoly(q, (x, y, fx, fy) => (paint && paint(name, ...faceUV(q, x, y), fx, fy, b)) || shade(mat, b, fx, fy));
+  }
+}
+
+// A bright rim where the top meets the faces toward the camera gives a box its volume
+const rimLight = (face, u, v) => face === 'top' && v < 0.22 ? C.white : null;
+
+// ---------- Fake screen content ----------
+
+// Terminal output: each line is a list of colored dashes
+function makeLines(seed, count, maxWidth, alertRate) {
+  const r = rng(seed);
+  const lines = [];
+  for (let i = 0; i < count; i++) {
+    const alert = r() < alertRate;
+    const segs = [{ x: 0, w: 1, c: alert ? C.amber : C.blue }];
+    let x = 2;
+    const end = 6 + r() * (maxWidth - 6);
+    while (x < end) {
+      const w = 1 + Math.floor(r() * 5);
+      segs.push({ x, w: Math.min(w, maxWidth - x), c: alert ? C.amber : r() < 0.1 ? C.blue : C.green });
+      x += w + 1;
+    }
+    lines.push(segs);
+  }
+  return lines;
+}
+
+// Source code: indented lines of keywords (amber), names (white), strings (green) and punctuation (blue)
+function makeCode(seed) {
+  const r = rng(seed), lines = [];
+  let indent = 0;
+  for (let i = 0; i < 40; i++) {
+    const segs = [];
+    let x = indent * 3;
+    if (r() < 0.4) { const w = 2 + Math.floor(r() * 3); segs.push({ x, w, c: C.amber }); x += w + 1; }
+    const words = 1 + Math.floor(r() * 3);
+    for (let k = 0; k < words && x < 34; k++) {
+      const w = Math.min(2 + Math.floor(r() * 5), 38 - x);
+      segs.push({ x, w, c: r() < 0.2 ? C.green : C.white });
+      x += w;
+      if (r() < 0.5) { segs.push({ x, w: 1, c: C.blue }); x += 1; }
+      x += 1;
+    }
+    lines.push(segs);
+    if (r() < 0.3 && indent < 3) indent++;
+    else if (r() < 0.3 && indent > 0) indent--;
+  }
+  return lines;
+}
+
+const lineLength = segs => segs.length ? segs[segs.length - 1].x + segs[segs.length - 1].w : 0;
+
+// ---------- Room layout ----------
+
+const DESK_STAND = 124, EDGE_SIT = 131, FLOOR_STAND = 164, FLOOR_Y = 168;
+const DESK_X = [64, 304], FLOOR_X = [10, 310];
+const PORTAL = { x: 287, y: 110, rx: 11, ry: 16 };
+const TANK = { x: 62, y: 104, w: 32, h: 24 };
+const CUP_X = 104;
+const SHELF_SPOT = 226, LAPTOP_SPOT = 270; // stand beside the laptop so TABS stays visible
+const MAX_AGENTS = 8;
+const monitors = [{ x: 116, agent: null }, { x: 174, agent: null }];
+
+const stars = [[30, 27], [41, 33], [52, 25], [63, 36], [72, 28], [36, 44], [98, 52], [58, 47], [104, 30]]
+  .map(([x, y], i) => ({ x, y, phase: i * 1.7, speed: 1 + (i % 3) * 0.7 }));
+const buildings = [[25, 10, 22], [35, 8, 30], [43, 12, 18], [55, 9, 34], [64, 14, 24], [78, 10, 28], [88, 8, 20], [96, 11, 26]];
+const clouds = [
+  { speed: 1.6, y: 30, offset: 0, w: [6, 12, 18, 14] }, { speed: 1.1, y: 46, offset: 70, w: [8, 14, 10] },
+  { speed: 1.3, y: 23, offset: 40, w: [10, 16, 12] }, { speed: 0.9, y: 38, offset: 100, w: [6, 14, 20, 16] },
+  { speed: 1.4, y: 52, offset: 20, w: [8, 12] }, { speed: 1.0, y: 27, offset: 85, w: [12, 20, 16, 8] }
+];
+const runLines = makeLines(42, 64, 40, 0.15);
+
+const world = { clock24: true, piParty: 0, tapped: false, portalFlare: 0, sessions: 0, ready: true };
+const steam = [];
+const pops = [];
+const drops = [];
+const storm = { flash: 0, next: 6, bolt: [] };
+const meteor = { active: false, next: 5, x: 0, y: 0, vx: 0, vy: 0, age: 0 };
+const moth = { x: PORTAL.x, y: PORTAL.y, vx: 0, vy: 0 };
+const cable = makeRope(298, 58, 311, 85, 12, 40);
+
+function pop(str, x, y, color, life = 1.4) {
+  pops.push({ str, x, y, color, age: 0, life });
+}
+
+// ---------- Bangkok time (UTC+7) drives the clock and the sky ----------
+
+const forcedHour = parseFloat(params.get('hour'));
+const SUNRISE = 6.2, SUNSET = 18.3, TWILIGHT = 0.7;
+
+function bkkNow() {
+  const d = new Date(Date.now() + 7 * 3600e3);
+  if (!isNaN(forcedHour)) d.setUTCHours(Math.floor(forcedHour), Math.round((forcedHour % 1) * 60));
+  return d;
+}
+
+// Where the sun or moon sits on its arc (0 = rising, 1 = setting), in window coordinates
+function arc(p) {
+  return { x: 22 + 8 + p * 72, y: 20 + 56 - Math.sin(p * Math.PI) * 44 };
+}
+
+function sky() {
+  const d = bkkNow(), h = d.getUTCHours() + d.getUTCMinutes() / 60 + d.getUTCSeconds() / 3600;
+  const rise = weather.sunrise ?? SUNRISE, set = weather.sunset ?? SUNSET;
+  const day = h >= rise && h < set;
+  const twilight = Math.min(Math.abs(h - rise), Math.abs(h - set)) < TWILIGHT;
+  const p = day ? (h - rise) / (set - rise) : ((h - set + 24) % 24) / (24 - set + rise);
+  const lights = twilight ? 0.25 : day ? 0 : h >= 23 || h < 5 ? 0.12 : 0.35; // fewer lit windows late at night
+  return { h, day, twilight, body: arc(p), lights };
+}
+
+// Real moon phase from a known new moon: 0 new, 0.5 full
+function moonPhase() {
+  const days = (Date.now() - Date.UTC(2000, 0, 6, 18, 14)) / 864e5;
+  return ((days / 29.530588853) % 1 + 1) % 1;
+}
+
+function moonLight() { return (1 - Math.cos(moonPhase() * 2 * Math.PI)) / 2; }
+
+// ---------- Bangkok weather (Open-Meteo, every 10 minutes; ?noweather turns it off) ----------
+
+const forcedWeather = params.get('weather');
+const weather = { kind: forcedWeather || 'clear', temp: null, cloud: 20, wind: 5, precip: 0, sunrise: null, sunset: null };
+const WEATHER_LABEL = { clear: 'CLEAR', cloudy: 'CLOUD', overcast: 'GREY', fog: 'FOG', rain: 'RAIN', storm: 'STORM', snow: 'SNOW' };
+
+// WMO weather codes grouped into what the window can show
+function weatherKind(code) {
+  if (code >= 95) return 'storm';
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return 'snow';
+  if (code >= 51) return 'rain';
+  if (code === 45 || code === 48) return 'fog';
+  if (code === 3) return 'overcast';
+  if (code === 2) return 'cloudy';
+  return 'clear';
+}
+
+async function fetchWeather() {
+  try {
+    const url = 'https://api.open-meteo.com/v1/forecast?latitude=13.75&longitude=100.5'
+      + '&current=temperature_2m,weather_code,cloud_cover,wind_speed_10m,precipitation'
+      + '&daily=sunrise,sunset&timezone=Asia%2FBangkok&forecast_days=1';
+    const d = await (await fetch(url)).json();
+    const hours = iso => +iso.slice(11, 13) + iso.slice(14, 16) / 60;
+    Object.assign(weather, {
+      kind: forcedWeather || weatherKind(d.current.weather_code),
+      temp: Math.round(d.current.temperature_2m),
+      cloud: d.current.cloud_cover, wind: d.current.wind_speed_10m, precip: d.current.precipitation,
+      sunrise: hours(d.daily.sunrise[0]), sunset: hours(d.daily.sunset[0])
+    });
+  } catch (e) { /* offline: keep the last known weather */ }
+}
+
+const wet = () => weather.kind === 'rain' || weather.kind === 'storm' || weather.kind === 'snow';
+const dull = () => wet() || weather.kind === 'overcast' || weather.kind === 'fog'; // sun and stars hidden
+
+function cloudCount() {
+  if (dull()) return clouds.length;
+  if (weather.kind === 'cloudy') return 4;
+  return Math.min(2, Math.max(1, Math.round(weather.cloud / 25)));
+}
+
+// ---------- Ambient physics ----------
+
+// Verlet rope pinned at both ends: settles into a natural sag under gravity
+function makeRope(ax, ay, bx, by, n, length) {
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const x = ax + (bx - ax) * i / n, y = ay + (by - ay) * i / n;
+    pts.push({ x, y, px: x, py: y });
+  }
+  return { pts, seg: length / n };
+}
+
+function updateRope(rope, dt) {
+  const pts = rope.pts, n = pts.length - 1;
+  for (let i = 1; i < n; i++) {
+    const p = pts[i], vx = (p.x - p.px) * 0.98, vy = (p.y - p.py) * 0.98;
+    p.px = p.x; p.py = p.y;
+    p.x += vx; p.y += vy + GRAVITY * dt * dt;
+  }
+  for (let k = 0; k < 12; k++)
+    for (let i = 0; i < n; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+      const wa = i === 0 ? 0 : 1, wb = i + 1 === n ? 0 : 1;
+      const s = (d - rope.seg) / d / (wa + wb);
+      a.x += dx * s * wa; a.y += dy * s * wa;
+      b.x -= dx * s * wb; b.y -= dy * s * wb;
+    }
+}
+
+function puffSteam(n, spread) {
+  for (let i = 0; i < n; i++)
+    steam.push({ x: CUP_X + 4 + rand(-1, 2), y: 116, vx: rand(-spread, spread), vy: rand(-6, -3), age: 0, life: rand(2, 3) });
+}
+
+// Steam: warm air rises faster as it goes, drifts with turbulence, then fades
+function updateSteam(dt) {
+  if (Math.random() < dt * 16) puffSteam(1, 0);
+  for (const p of steam) {
+    p.vy -= 3 * dt;
+    p.vx = (p.vx + rand(-15, 15) * dt) * 0.97;
+    p.x += p.vx * dt; p.y += p.vy * dt; p.age += dt;
+  }
+  for (let i = steam.length - 1; i >= 0; i--) if (steam[i].age > steam[i].life) steam.splice(i, 1);
+}
+
+// Shooting star on a slight ballistic arc
+function launchMeteor(t) {
+  Object.assign(meteor, { active: true, x: rand(60, 105), y: rand(22, 30), vx: -80, vy: 20, age: 0, next: t + rand(8, 18) });
+}
+
+function updateMeteor(dt, t) {
+  if (!meteor.active && t > meteor.next && !world.sky?.day && !dull()) launchMeteor(t);
+  if (!meteor.active) return;
+  meteor.vy += 40 * dt;
+  meteor.x += meteor.vx * dt; meteor.y += meteor.vy * dt; meteor.age += dt;
+  if (meteor.age > 0.7) meteor.active = false;
+}
+
+// Moth: drawn to the portal's light with random flutter
+function updateMoth(dt) {
+  moth.vx = (moth.vx + ((PORTAL.x - moth.x) * 6 + rand(-300, 300)) * dt) * 0.96;
+  moth.vy = (moth.vy + ((PORTAL.y - 4 - moth.y) * 6 + rand(-300, 300)) * dt) * 0.96;
+  moth.x += moth.vx * dt; moth.y += moth.vy * dt;
+}
+
+// Rain falls fast and slants with the wind, snow drifts; both stop at the window sill
+let dropBudget = 0;
+function updateDrops(dt) {
+  const snow = weather.kind === 'snow';
+  const rate = weather.kind === 'storm' ? 150 : weather.kind === 'rain' ? (weather.precip > 1 ? 110 : 70) : snow ? 14 : 0;
+  for (dropBudget += rate * dt; dropBudget >= 1; dropBudget--)
+    drops.push({ x: rand(10, 125), y: 18, vx: snow ? rand(-4, 4) : -weather.wind * 1.5, vy: snow ? rand(8, 14) : rand(110, 150), snow });
+  for (const d of drops) {
+    if (d.snow) d.vx = (d.vx + rand(-25, 25) * dt) * 0.98;
+    d.x += d.vx * dt; d.y += d.vy * dt;
+  }
+  for (let i = drops.length - 1; i >= 0; i--) if (drops[i].y > 90) drops.splice(i, 1);
+}
+
+// Lightning: a jagged bolt, a double flash, and everyone flinches
+function updateStorm(dt, t) {
+  storm.flash = Math.max(0, storm.flash - dt);
+  if (weather.kind !== 'storm' || t < storm.next) return;
+  storm.flash = 0.3;
+  storm.next = t + rand(5, 14);
+  let x = rand(40, 95), y = 20;
+  storm.bolt = [[x, y]];
+  while (y < 62) { x += rand(-5, 5); y += rand(4, 8); storm.bolt.push([x, y]); }
+  for (const a of agents) if (FREE_ACTIONS.includes(a.action)) startAction(a, 'alarm');
+  startleCat();
+}
+
+function lightning() { return storm.flash > 0.2 || (storm.flash > 0 && storm.flash < 0.1); }
+
+function updatePops(dt) {
+  for (const p of pops) { p.y -= 10 * dt; p.age += dt; }
+  for (let i = pops.length - 1; i >= 0; i--) if (pops[i].age > pops[i].life) pops.splice(i, 1);
+}
+
+// ---------- The fish tank ----------
+
+const tankIn = { x0: TANK.x + 3, x1: TANK.x + TANK.w - 4, y0: TANK.y + 6, y1: TANK.y + TANK.h - 6 };
+// a clownfish (amber, white stripe), a white fish with blue fins and a green tetra with a blue line
+const fishes = [[C.amber, C.white], [C.white, C.blue], [C.green, C.blue]]
+  .map(([c, mark], i) => ({ c, mark, x: TANK.x + 8 + i * 8, y: TANK.y + 9 + i * 3, vx: i % 2 ? -6 : 6, vy: 0, tx: 0, ty: 0, next: 0 }));
+const flakes = [];
+const bubbles = [];
+
+function feedFish() {
+  for (let i = 0; i < 5; i++) flakes.push({ x: rand(tankIn.x0, tankIn.x1), y: TANK.y + 4, vy: 0, age: 0 });
+}
+
+function tapTank(x) {
+  for (const f of fishes) { f.vx += (f.x < x ? -1 : 1) * 30; f.vy += rand(-12, 12); }
+}
+
+// Fish steer toward food or a wandering target, with drag; flakes sink slowly
+function updateTank(dt, t) {
+  if (Math.random() < dt * 4) bubbles.push({ x: TANK.x + 5 + rand(-0.5, 0.5), y: TANK.y + TANK.h - 5, big: Math.random() < 0.3 });
+  for (const b of bubbles) { b.y -= 10 * dt; b.x += Math.sin(t * 6 + b.y) * 0.1; }
+  for (let i = bubbles.length - 1; i >= 0; i--) if (bubbles[i].y < TANK.y + 5) bubbles.splice(i, 1);
+  for (const f of flakes) { f.vy = Math.min(f.vy + 20 * dt, 4); f.y = Math.min(f.y + f.vy * dt, TANK.y + TANK.h - 4); f.age += dt; }
+  for (let i = flakes.length - 1; i >= 0; i--) if (flakes[i].age > 15) flakes.splice(i, 1);
+  for (const f of fishes) {
+    const food = flakes.reduce((best, k) => !best || Math.hypot(k.x - f.x, k.y - f.y) < Math.hypot(best.x - f.x, best.y - f.y) ? k : best, null);
+    if (food) { f.tx = food.x; f.ty = food.y; }
+    else if (t > f.next) { f.tx = rand(tankIn.x0, tankIn.x1); f.ty = rand(tankIn.y0, tankIn.y1); f.next = t + rand(2, 5); }
+    f.vx = (f.vx + (f.tx - f.x) * 2 * dt) * 0.97;
+    f.vy = (f.vy + (f.ty - f.y) * 2 * dt) * 0.95;
+    f.x = Math.max(tankIn.x0, Math.min(tankIn.x1, f.x + f.vx * dt));
+    f.y = Math.max(tankIn.y0, Math.min(tankIn.y1, f.y + f.vy * dt));
+    if (food && Math.hypot(food.x - f.x, food.y - f.y) < 2) flakes.splice(flakes.indexOf(food), 1);
+  }
+}
+
+// ---------- The cat ----------
+
+const cat = { x: 200, y: 0, vy: 0, yaw: 0.7, action: 'sleep', timer: 8, target: 200, face: 1, moving: false };
+
+function startCat(action, time) {
+  cat.action = action;
+  cat.timer = time;
+  if (action === 'walk') cat.target = rand(20, 300);
+}
+
+function petCat() {
+  if (cat.action !== 'purr') startCat('purr', 4);
+}
+
+function startleCat() {
+  if (cat.y < 0) return;
+  cat.vy = -90;
+  pop('!', cat.x - 1, 146, C.amber);
+  startCat('walk', 3);
+}
+
+function updateCat(dt, t) {
+  if (cat.y !== 0 || cat.vy !== 0) {
+    cat.vy += GRAVITY * dt; cat.y += cat.vy * dt;
+    if (cat.vy > 0 && cat.y >= 0) { cat.y = 0; cat.vy = 0; }
+  }
+  cat.timer -= dt;
+  cat.moving = false;
+  const goal = cat.action === 'walk' ? cat.target : cat.action === 'watch' ? TANK.x + 16 : null;
+  if (goal !== null) {
+    const dx = goal - cat.x;
+    if (Math.abs(dx) > 1) { cat.face = Math.sign(dx); cat.x += cat.face * 12 * dt; cat.moving = true; }
+    else if (cat.action === 'walk') cat.timer = Math.min(cat.timer, 0.3);
+  }
+  if (cat.action === 'sleep' && Math.random() < dt * 0.4) pop('Z', cat.x + 3, 150, C.white, 2.2);
+  if (cat.action === 'purr' && Math.random() < dt * 1.5) pop('&', cat.x + rand(-4, 2), 150, C.amber);
+  if (cat.timer <= 0) {
+    const r = Math.random();
+    if (r < 0.35) startCat('walk', 8);
+    else if (r < 0.55) startCat('sit', rand(4, 7));
+    else if (r < 0.8) startCat('sleep', rand(10, 18));
+    else if (r < 0.9) startCat('groom', rand(3, 5));
+    else startCat('watch', rand(6, 10)); // sits under the fish tank, staring
+  }
+  const target = cat.moving ? cat.face * Math.PI / 2
+    : cat.action === 'watch' ? Math.PI : cat.action === 'sleep' ? cat.face * 0.8 : cat.face * 0.5;
+  cat.yaw += angleDiff(target, cat.yaw) * Math.min(1, dt * 6);
+}
+
+// ---------- Agents: one Claude per session, with a little state machine and physics ----------
+
+const agents = [];
+
+// Model colour from /state mapped onto the palette, worn as the antenna tip
+function badgeFor(colour) {
+  const c = String(colour).toLowerCase();
+  return c === '#d97757' ? C.amber : c === '#6a9bcc' ? C.blue : c === '#7fa36b' ? C.green : C.white;
+}
+
+function spawnAgent(info) {
+  const a = {
+    id: info.id, info, helper: !!info.parent, badge: badgeFor(info.colour), code: makeCode(hashText(info.id)),
+    x: PORTAL.x, y: 0, vx: 0, vy: 0, level: 'desk', seat: false, squash: 0, scale: 0.1,
+    action: 'spawn', timer: Infinity, target: PORTAL.x, face: -1, hops: 0, happy: 0, yaw: 0, idleYaw: 0, spin: 0,
+    activity: '', task: null, taskTime: 0, monitor: null, arrived: false, moving: false, sub: 0, after: null, buddy: null
+  };
+  agents.push(a);
+  world.portalFlare = 0.8;
+  pop(shortName(info.project || info.name, 8) || 'CLAUDE', PORTAL.x - 12, 86, C.green, 2);
+  return a;
+}
+
+const baseOf = a => a.level === 'floor' ? FLOOR_STAND : a.seat ? EDGE_SIT : DESK_STAND;
+const bottomOf = a => baseOf(a) + Math.round(a.y);
+const grounded = a => a.y === 0 && a.vy === 0;
+const fullScale = a => a.helper ? 0.7 : 1;
+
+function jump(a, vy, vx = 0) { a.vy = vy; a.vx = vx; }
+
+// Change what an agent stands on without a visible jump in position
+function rebase(a, change) {
+  const before = baseOf(a);
+  change();
+  a.y += before - baseOf(a);
+}
+
+function setSeat(a, seat) {
+  if (a.seat === seat || a.level !== 'desk') return;
+  rebase(a, () => { a.seat = seat; });
+  if (!seat) jump(a, -75);
+}
+
+// Hop down to the floor in front of the desk, or jump back up onto it
+function setLevel(a, level) {
+  if (a.level === level) return;
+  rebase(a, () => { a.seat = false; a.level = level; });
+  jump(a, level === 'desk' ? -175 : -30);
+}
+
+function walkTo(a, x, speed, dt) {
+  const dx = x - a.x;
+  if (Math.abs(dx) <= 1) return grounded(a);
+  if (grounded(a)) {
+    a.face = Math.sign(dx);
+    a.x += a.face * Math.min(speed * dt, Math.abs(dx));
+    a.moving = true;
+  }
+  return false;
+}
+
+// ---------- Computers ----------
+
+const freeMonitor = () => monitors.find(m => !m.agent);
+
+function assignWork(a) {
+  if (a.monitor) return true;
+  const m = freeMonitor();
+  if (!m) return false;
+  m.agent = a;
+  a.monitor = m;
+  return true;
+}
+
+function release(a) {
+  if (a.monitor) a.monitor.agent = null;
+  a.monitor = null;
+}
+
+// ---------- What each session's state means for its agent ----------
+
+const KIND = tool =>
+  /^(Edit|Write|NotebookEdit|MultiEdit)$/.test(tool) ? 'code'
+  : /^(Bash|PowerShell)$/.test(tool) ? 'run'
+  : /^(Read|Grep|Glob)$/.test(tool) ? 'read'
+  : /Web|Browser|chrome/.test(tool) ? 'web'
+  : 'think';
+
+function activityOf(c) {
+  switch (c.state) {
+    case 'working':  return c.tool ? KIND(c.tool) : 'think';
+    case 'error':    return 'fix';
+    case 'thinking': return 'think';
+    case 'waiting':  return 'wait';
+    case 'done':     return 'done';
+    default:         return 'off';
+  }
+}
+
+const AT_COMPUTER = ['code', 'run', 'fix'];
+const FREE_ACTIONS = ['sit', 'walk', 'hop', 'dance', 'look', 'gaze', 'fish', 'cat', 'tea', 'stretch', 'book', 'highfive', 'sleep', 'think'];
+const DESK_ONLY = ['sit', 'sleep', 'gaze', 'fish', 'tea', 'book', 'work', 'busy', 'read', 'browse', 'leave', 'highfive'];
+
+function applyState(a, c) {
+  a.info = c;
+  const act = activityOf(c);
+  if (act === a.activity) return;
+  const wasWorking = a.monitor && AT_COMPUTER.includes(a.activity);
+  a.activity = act;
+  if (AT_COMPUTER.includes(act)) { a.task = act; a.taskTime = 0; }
+  else if (act === 'done' && wasWorking) { a.task = 'done'; a.taskTime = 0; } // DONE on its screen for a moment
+  else { a.task = null; release(a); }
+  if (a.action !== 'spawn' && a.action !== 'leave') plan(a);
+}
+
+// Pick the action that shows what the session is doing; free time when it is done
+function plan(a) {
+  switch (a.activity) {
+    case 'code': case 'run': case 'fix': return startAction(a, assignWork(a) ? 'work' : 'busy');
+    case 'done':  return startAction(a, a.monitor ? 'work' : freeMood(a));
+    case 'read':  return startAction(a, 'read');
+    case 'web':   return startAction(a, 'browse');
+    case 'wait':  return startAction(a, 'wait');
+    case 'off':   return startAction(a, 'sleep');
+    default:      return startAction(a, 'think');
+  }
+}
+
+function freeMood(a) {
+  const busyWith = act => agents.some(o => o !== a && o.action === act);
+  const moods = ['sit', 'walk', 'hop', 'dance', 'look', 'gaze', 'fish', 'fish', 'tea', 'stretch', 'book'];
+  if (!busyWith('cat')) moods.push('cat', 'cat');
+  if (wet()) moods.push('gaze', 'gaze'); // rain is worth watching
+  if (findBuddy(a)) moods.push('highfive');
+  return pick(moods);
+}
+
+const findBuddy = a => agents.find(o => o !== a && o.activity === 'done' && o.level === 'desk' && FREE_ACTIONS.includes(o.action) && !o.buddy);
+
+function startAction(a, name) {
+  if (DESK_ONLY.includes(name) && a.level === 'floor') {
+    setLevel(a, 'desk');
+    a.action = 'climb'; a.after = name; a.timer = 3; a.arrived = false;
+    return;
+  }
+  if (a.buddy && name !== 'highfive' && name !== 'buddy') { a.buddy.buddy = null; a.buddy = null; }
+  a.action = name; a.sub = 0; a.arrived = false;
+  if (name !== 'sit' && name !== 'sleep' && a.seat) setSeat(a, false);
+  const [lo, hi] = a.level === 'floor' ? FLOOR_X : DESK_X;
+  switch (name) {
+    case 'sit':     setSeat(a, true); a.timer = rand(4, 8); a.idleYaw = pick([0, 0.5, -0.5, 0.9]); break;
+    case 'sleep':   setSeat(a, true); a.timer = rand(8, 14); break;
+    case 'walk':    a.target = rand(lo, hi); a.timer = 9; break;
+    case 'hop':     a.hops = 1 + Math.floor(rand(0, 3)); a.timer = 3; break;
+    case 'dance':   a.timer = rand(4, 6); break;
+    case 'look':    a.timer = 3; break;
+    case 'stretch': a.timer = 2.5; break;
+    case 'gaze':    a.target = rand(66, 108); a.timer = rand(7, 10); break;
+    case 'fish':    a.target = TANK.x + TANK.w / 2 + rand(-5, 5); a.timer = rand(8, 11); break;
+    case 'tea':     a.target = CUP_X - 6; a.timer = rand(5, 7); break;
+    case 'book':    a.target = SHELF_SPOT + rand(-3, 3); a.timer = rand(6, 9); break;
+    case 'cat':     setLevel(a, 'floor'); a.timer = 14; break;
+    case 'highfive': {
+      const b = findBuddy(a);
+      if (!b) { a.action = 'look'; a.timer = 2; break; }
+      a.buddy = b; b.buddy = a;
+      if (b.seat) setSeat(b, false);
+      b.action = 'buddy'; b.timer = 8; b.arrived = false;
+      a.timer = 8;
+      break;
+    }
+    case 'buddy':   a.timer = 8; break;
+    case 'work':    a.timer = Infinity; break;
+    case 'busy':    a.target = rand(66, 112); a.timer = Infinity; break; // waits by the tank for a free computer
+    case 'read':    a.target = SHELF_SPOT + rand(-3, 3); a.timer = Infinity; break;
+    case 'browse':  a.target = LAPTOP_SPOT; a.timer = Infinity; break;
+    case 'think':   a.target = rand(lo, hi); a.timer = rand(3, 6); break;
+    case 'wait':    a.timer = Infinity; break;
+    case 'leave':   release(a); a.target = PORTAL.x; a.timer = Infinity; break;
+    case 'alarm':   pop('!', a.x - 1, bottomOf(a) - 18, C.amber); if (grounded(a)) jump(a, -70); a.timer = 2; break;
+    default:        a.timer = 2;
+  }
+}
+
+function nextAction(a) {
+  // free-time actions run out and pick another; the rest re-plan from the session state
+  if (a.activity === 'done' && !a.monitor) startAction(a, freeMood(a));
+  else plan(a);
+}
+
+function updateAgent(a, dt, t) {
+  a.moving = false;
+  if (a.y !== 0 || a.vy !== 0) {
+    a.vy += GRAVITY * dt;
+    a.y += a.vy * dt;
+    a.x += a.vx * dt;
+    if (a.vy > 0 && a.y >= 0) { a.y = 0; a.vy = 0; a.vx = 0; a.squash = 0.12; }
+  }
+  a.squash = Math.max(0, a.squash - dt);
+  a.happy = Math.max(0, a.happy - dt);
+  a.timer -= dt;
+  const ready = grounded(a) && a.squash === 0;
+  const scale = fullScale(a);
+
+  switch (a.action) {
+    case 'spawn':
+      a.scale = Math.min(scale, a.scale + dt * 1.6);
+      if (a.scale >= scale && a.sub === 0) { a.sub = 1; jump(a, -60, -25); a.timer = 0.6; }
+      break;
+    case 'leave':
+      if (a.level === 'floor') { setLevel(a, 'desk'); break; }
+      if (walkTo(a, PORTAL.x, 18, dt)) {
+        a.arrived = true;
+        a.scale -= dt * 1.8;
+        world.portalFlare = 0.5;
+        if (a.scale <= 0.05) a.gone = true;
+      }
+      break;
+    case 'climb':
+      if (grounded(a)) startAction(a, a.after);
+      break;
+    case 'work': {
+      if (!a.task || !a.monitor) { release(a); a.timer = 0; break; }
+      if (!walkTo(a, a.monitor.x + 27, 30, dt)) break;
+      a.arrived = true;
+      a.taskTime += dt;
+      if (a.task === 'done' && a.taskTime > 4) { pop('*', a.x - 1, bottomOf(a) - 18, C.green); a.happy = 1.5; a.task = null; release(a); a.timer = 0; }
+      break;
+    }
+    case 'busy':
+      if (assignWork(a)) { startAction(a, 'work'); break; }
+      a.arrived = walkTo(a, a.target, 16, dt) || a.arrived;
+      break;
+    case 'read': case 'browse': case 'gaze': case 'tea': case 'book':
+      if (walkTo(a, a.target, 16, dt)) {
+        if (!a.arrived && a.action === 'tea') { puffSteam(10, 8); a.happy = 1.5; }
+        a.arrived = true;
+      }
+      break;
+    case 'think':
+      a.arrived = walkTo(a, a.target, 8, dt);
+      break;
+    case 'wait':
+      a.arrived = true;
+      if (ready && Math.random() < dt * 0.3) jump(a, -40);
+      break;
+    case 'fish':
+      if (!walkTo(a, a.target, 14, dt)) break;
+      a.arrived = true;
+      if (Math.random() < dt * 0.4) { if (Math.random() < 0.5) feedFish(); else tapTank(a.x); a.happy = 1; }
+      break;
+    case 'cat': {
+      if (a.level !== 'floor') break;
+      const side = a.x < cat.x ? -1 : 1;
+      if (!walkTo(a, cat.x + side * 13, 16, dt)) break;
+      a.arrived = true;
+      a.face = -side;
+      petCat();
+      break;
+    }
+    case 'highfive': {
+      const b = a.buddy;
+      if (!b) { a.timer = 0; break; }
+      const meet = (a.x + b.x) / 2, side = a.x < b.x ? -1 : 1;
+      const here = walkTo(a, meet + side * 9, 16, dt), there = walkTo(b, meet - side * 9, 16, dt);
+      a.face = -side; b.face = side;
+      if (here && there && !a.arrived) {
+        a.arrived = b.arrived = true;
+        jump(a, -60); jump(b, -60);
+        pop('*', meet - 1, bottomOf(a) - 20, C.green);
+        a.happy = b.happy = 2;
+        a.timer = b.timer = 1.5;
+      }
+      break;
+    }
+    case 'hop':
+      if (ready && a.hops > 0) { jump(a, -65, rand(-10, 10)); a.hops--; }
+      break;
+    case 'dance':
+      if (ready) jump(a, -35, rand(-8, 8));
+      if (Math.random() < dt * 1.5) pop('%', a.x + rand(-8, 6), bottomOf(a) - 16, C.blue);
+      break;
+    case 'sleep':
+      if (Math.random() < dt * 0.5) pop('Z', a.x + 4, bottomOf(a) - 14, C.white, 2.2);
+      break;
+    case 'walk':
+      if (walkTo(a, a.target, 14, dt)) a.timer = Math.min(a.timer, 0.6);
+      break;
+  }
+
+  const [lo, hi] = a.level === 'floor' ? FLOOR_X : DESK_X;
+  a.x = Math.max(lo, Math.min(hi, a.x));
+  if (a.action === 'buddy' && !a.buddy) a.timer = 0;
+  if (a.timer <= 0 && grounded(a)) nextAction(a);
+
+  // Turn smoothly toward where the agent wants to face; dancing and taps make it spin
+  if (a.action === 'dance') a.yaw += dt * 7;
+  else if (a.spin > 0) { const step = Math.min(a.spin, dt * 12); a.yaw += step; a.spin -= step; }
+  else a.yaw += angleDiff(yawTarget(a, t), a.yaw) * Math.min(1, dt * 8);
+}
+
+// 0 faces the camera, positive turns right, about 3 is the back
+function yawTarget(a, t) {
+  const walking = a.face * 1.1;
+  if (a.moving) return walking;
+  switch (a.action) {
+    case 'work': case 'fish': case 'leave': case 'read': case 'book':
+      return a.arrived ? Math.PI : walking;
+    case 'browse': return a.arrived ? -1.3 : walking; // turned toward the laptop
+    case 'busy':  return 0.4;
+    case 'tea':   return a.arrived ? 1.2 : walking;
+    case 'gaze':  return a.arrived ? -2.6 : walking; // back to us, looking out of the window
+    case 'cat':   return a.arrived ? a.face * 1.3 : walking;
+    case 'highfive': case 'buddy': return a.face * 1.2;
+    case 'think': return Math.sin(t * 0.8 + a.x) * 0.6;
+    case 'look':  return Math.sin(t * 1.6 + a.x) * 1.2;
+    case 'sleep': return 0.35;
+    case 'wait': case 'alarm': case 'spawn': return 0;
+    default:      return a.idleYaw;
+  }
+}
+
+// ---------- Live sessions from /state (or made-up ones with ?demo) ----------
+
+function sync(list) {
+  world.sessions = list.length;
+  // busy sessions first, so idle ones are the ones left out when the room is full
+  const order = { working: 0, error: 0, waiting: 1, thinking: 2, done: 3 };
+  const shown = [...list].sort((p, q) => (order[p.state] ?? 4) - (order[q.state] ?? 4)).slice(0, MAX_AGENTS);
+  const ids = new Set(shown.map(c => c.id));
+  for (const c of shown) applyState(agents.find(a => a.id === c.id) || spawnAgent(c), c);
+  for (const a of agents) if (!ids.has(a.id) && a.action !== 'leave') { a.task = null; startAction(a, 'leave'); }
+  renderList(list);
+}
+
+const DEMO = [
+  { id: 'demo-a', name: 'Opus 5.5', project: 'Agent Room', colour: '#D97757' },
+  { id: 'demo-b', name: 'Sonnet 5.5', project: 'Website', colour: '#6A9BCC' },
+  { id: 'demo-c', name: 'Haiku 5.5', project: 'Scripts', colour: '#7FA36B' },
+  { id: 'demo-d', name: 'Fable 5.1', project: 'Docs', colour: '#B08AD9' },
+  { id: 'demo-a1', parent: 'demo-a', name: 'Explore', project: 'Agent Room', colour: '#D97757', desc: 'Find the API routes' }
+];
+const DEMO_TOOLS = ['Edit', 'Edit', 'Write', 'Bash', 'Bash', 'Read', 'Grep', 'WebSearch'];
+const DEMO_WORDS = { working: 'Working', thinking: 'Thinking', waiting: 'May need you', error: 'Fixing an error', done: 'Done', off: 'Idle' };
+
+// Made-up sessions that change every 10 seconds, and sometimes come and go
+function demoState() {
+  const k = Math.floor(Date.now() / 10000);
+  return DEMO.filter((s, i) => (k + i * 3) % 9 !== 0 && !(s.parent && k % 3 === 0)).map((s, i) => {
+    const r = hash(k * 7 + i);
+    const state = r < 0.5 ? 'working' : r < 0.6 ? 'thinking' : r < 0.68 ? 'waiting' : r < 0.72 ? 'error' : r < 0.92 ? 'done' : 'off';
+    const tool = state === 'working' ? DEMO_TOOLS[Math.floor(hash(k * 3 + i) * DEMO_TOOLS.length)] : '';
+    return Object.assign({ parent: '', state, tool, word: DEMO_WORDS[state], step: tool ? tool + ': src/app.js' : '',
+      turn: state === 'working' ? '1m 20s' : '', context: '34% (68k of 200k)', steps: 40 + i * 7, rate: 5 + i }, s);
+  });
 }
 
 async function poll() {
-  if (location.search.includes('demo')) { measure(); sync(last = demo()); setTimeout(poll, 1500); return; }
+  if (params.has('demo')) { sync(demoState()); setTimeout(poll, 1500); return; }
   try {
     const d = await (await fetch('/state', { cache: 'no-store' })).json();
-    measure(); sync(last = d.claudes);
+    world.ready = d.ready !== false;
+    sync(d.claudes || []);
   } catch (e) {
     // server stopped: the desktop app window (opened with ?app) closes itself; elsewhere keep the last picture
-    if (location.search.includes('app')) window.close();
+    if (params.has('app')) window.close();
   }
   setTimeout(poll, 1500);
 }
-resize(); poll(); frame();
+
+// ---------- Session list (shown under the room in tall panels) ----------
+
+function el(tag, cls, str) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (str) e.textContent = str;
+  return e;
+}
+
+function renderList(list) {
+  listEl.replaceChildren();
+  if (!list.length) {
+    listEl.append(el('div', 'empty', world.ready ? 'No active Claude Code sessions right now.' : 'Reading sessions...'));
+    return;
+  }
+  for (const c of list) {
+    const row = el('div', 'row'), dot = el('div', 'dot'), body = el('div');
+    dot.style.background = c.colour || C.amber;
+    body.append(el('span', 'name', (c.parent ? '  ' : '') + (c.name || 'Claude') + (c.project ? ' . ' + c.project : '')),
+      document.createTextNode(' '), el('span', 'state', c.word || c.state || ''));
+    if (c.step || c.desc) body.append(el('div', 'step', c.step || c.desc));
+    row.append(dot, body);
+    listEl.append(row);
+  }
+}
+
+// ---------- Room and lighting ----------
+
+function cloudX(cl, t) { return -10 + ((t * cl.speed * (0.6 + weather.wind / 12) + cl.offset) % 130); }
+
+function bodyCovered(t, s) {
+  return clouds.some(cl => Math.abs(22 + cloudX(cl, t) - s.body.x) < 9 && Math.abs(cl.y - s.body.y) < 8);
+}
+
+function drawRoom() {
+  rect(C.night, 0, 0, W, H);
+  for (let x = 6; x < W; x += 24) rect(C.navy, x, 0, 1, 150); // wall panels
+  rect(C.wood, 0, 150, W, H - 150);                              // floor
+  rect(C.oak, 0, 150, W, 2);                                     // baseboard
+  for (let y = 158; y < H; y += 8) rect(C.oak, 0, y, W, 1);      // floor planks
+  for (let i = 0; i < 18; i++) rect(C.oak, (i * 53 + (i % 2) * 20) % W, 152 + (i % 4) * 8 + 1, 1, 7);
+}
+
+function drawLights(t, s) {
+  glow(C.navy, 172, 100, 78, 36);                                                     // monitor glow
+  glow(world.portalFlare > 0 ? C.green : C.navy, PORTAL.x, PORTAL.y, 26, 26, 0.35); // portal glow
+  if (lightning()) glow(C.blue, 66, 110, 80, 60, 0.6);
+  // Sunlight or moonlight on the floor, dimmer at twilight, under clouds or a thin moon, gone in rain
+  if (wet()) return;
+  const weak = s.twilight || dull() || bodyCovered(t, s) || (!s.day && moonLight() < 0.3);
+  const step = weak ? 8 : 4, color = s.day || s.twilight ? C.amber : C.blue;
+  for (let y = 153; y < H; y += 2)
+    for (let x = 30 - (y - 153); x < 100 - (y - 153); x++)
+      if ((x + (y % 4 === 1 ? step / 2 : 0)) % step === 0) px(color, x, y);
+}
+
+function drawRug() {
+  rect(C.navy, 112, 157, 120, 16);
+  for (let x = 114; x < 230; x += 3) { px(C.blue, x, 159); px(C.blue, x, 170); }
+  for (let y = 157; y < 173; y += 2) { px(C.white, 111, y); px(C.white, 232, y); }
+}
+
+// ---------- Window ----------
+
+function drawWindow(t, sk) {
+  const x = 22, y = 20, w = 88, h = 70;
+  const bright = sk.day && !sk.twilight;
+  rect(C.oak, x - 3, y - 3, w + 6, h + 6);
+  rect(lightning() ? C.white : bright && !wet() ? C.blue : C.navy, x, y, w, h);
+  // Grey skies: pale over blue when overcast, dim over navy when raining by day
+  if (bright && dull() && !lightning())
+    for (let yy = y; yy < y + h; yy++)
+      for (let xx = x; xx < x + w; xx++)
+        if ((xx + yy) % 2 === 0) px(wet() ? C.blue : C.white, xx, yy);
+
+  // Horizon: warm glow at sunrise and sunset, pale haze by day
+  for (let yy = y + h - 30; yy < y + h; yy++)
+    for (let xx = x; xx < x + w; xx++) {
+      const low = yy > y + h - 14;
+      if (sk.twilight && (low ? (xx + yy) % 2 === 0 : xx % 2 === 0 && yy % 2 === 0)) px(C.amber, xx, yy);
+      else if (bright && low && xx % 2 === 0 && yy % 2 === 0) px(C.white, xx, yy);
+    }
+
+  if (!sk.day && !dull()) stars.forEach((s, i) => {
+    if (sk.twilight && i % 2) return; // only the brightest stars at dusk and dawn
+    const v = Math.sin(t * s.speed + s.phase);
+    if (v > -0.4) px(v > 0.5 ? C.white : C.blue, s.x, s.y);
+    if (v > 0.9) { px(C.blue, s.x - 1, s.y); px(C.blue, s.x + 1, s.y); px(C.blue, s.x, s.y - 1); px(C.blue, s.x, s.y + 1); }
+  });
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x * R, y * R, w * R, h * R); ctx.clip();
+  if (!dull()) {
+    if (sk.day) drawSun(sk.body.x, sk.body.y, sk.twilight);
+    else drawMoon(sk.body.x, sk.body.y, 8, moonPhase());
+  }
+  const cloudColor = wet() ? (sk.day ? C.navy : C.night) : sk.day ? C.white : C.blue;
+  for (const cl of clouds.slice(0, cloudCount())) blob(cloudColor, x + cloudX(cl, t), cl.y, cl.w, true);
+  if (!wet()) drawPlane(t);
+  drawMeteor();
+  if (storm.flash > 0.2) for (let i = 1; i < storm.bolt.length; i++) line(C.white, ...storm.bolt[i - 1], ...storm.bolt[i], R);
+  ctx.restore();
+
+  drawSkyline(y + h, t, sk);
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x * R, y * R, w * R, h * R); ctx.clip();
+  if (weather.kind === 'fog')
+    for (let yy = y; yy < y + h; yy++)
+      for (let xx = x; xx < x + w; xx++)
+        if (yy > y + h - 30 ? (xx + yy) % 2 === 0 : xx % 2 === 0 && yy % 2 === 0) px(sk.day ? C.white : C.blue, xx, yy);
+  for (const d of drops) {
+    if (d.snow) px(C.white, d.x, d.y);
+    else line(sk.day ? C.white : C.blue, d.x, d.y, d.x - d.vx * 0.03, d.y - 4);
+  }
+  ctx.restore();
+
+  line(C.blue, x + 4, y + 10, x + 10, y + 4);
+  line(C.blue, x + 48, y + 46, x + 52, y + 42);
+  rect(C.oak, x + w / 2 - 1, y, 2, h);
+  rect(C.oak, x, y + h / 2 - 1, w, 2);
+  rect(C.wood, x - 5, y + h + 3, w + 10, 3);
+  drawCactus(x + 6, y + h + 3);
+}
+
+// Moon drawn in its real phase: lit side on the right while waxing, left while waning
+function drawMoon(cx, cy, r, phase) {
+  cx = Math.round(cx); cy = Math.round(cy);
+  if (moonLight() > 0.3) glow(C.blue, cx, cy, r + 5, r + 5);
+  const k = Math.cos(phase * 2 * Math.PI);
+  const craters = [[-3, -2], [2, 1], [-1, 3], [3, -4], [-4, 2], [4, 4], [1, -2], [2, -2], [1, -1], [2, -1]];
+  for (let dy = -r; dy <= r; dy++)
+    for (let dx = -r; dx <= r; dx++) {
+      if (dx * dx + dy * dy > r * r) continue;
+      const nx = dx / r, ny = dy / r, side = phase < 0.5 ? nx : -nx;
+      const lit = side > k * Math.sqrt(1 - ny * ny);
+      const crater = craters.some(([a, b]) => a === dx && b === dy);
+      px(lit ? (crater ? C.blue : C.white) : C.night, cx + dx, cy + dy);
+    }
+}
+
+function drawSun(cx, cy, low) {
+  cx = Math.round(cx); cy = Math.round(cy);
+  glow(low ? C.amber : C.white, cx, cy, 13, 13, 0);
+  for (let dy = -6; dy <= 6; dy++)
+    for (let dx = -6; dx <= 6; dx++) {
+      const d = dx * dx + dy * dy;
+      if (d <= 36) px(d <= 12 && !low ? C.white : C.amber, cx + dx, cy + dy);
+    }
+}
+
+// A plane crosses the sky every 45 seconds with blinking lights
+function drawPlane(t) {
+  const x = 10 + (t * 5) % 225, y = 26 + x * 0.04;
+  px(C.white, x, y);
+  if (Math.floor(t * 2) % 2) px(C.amber, x + 2, y);
+}
+
+function drawMeteor() {
+  if (!meteor.active) return;
+  for (let k = 5; k >= 0; k--)
+    px(k ? C.blue : C.white, meteor.x - meteor.vx * k * 0.012, meteor.y - meteor.vy * k * 0.012);
+}
+
+function drawSkyline(bottom, t, sk) {
+  const r = rng(3);
+  let i = 0;
+  const bright = sk.day && !sk.twilight;
+  for (const [bx, bw, bh] of buildings) {
+    rect(bright ? C.navy : C.night, bx, bottom - bh, bw, bh);
+    for (let wy = bottom - bh + 3; wy < bottom - 2; wy += 4)
+      for (let wx = bx + 2; wx < bx + bw - 2; wx += 3) {
+        const v = r();
+        if (bright) { if (v < 0.35) px(C.blue, wx, wy); continue; } // glass reflecting the sky
+        const flip = hash(i++ * 13 + Math.floor(t / 2)) > 0.98;    // someone switches a light
+        if ((v < sk.lights) !== flip) px(C.amber, wx, wy);
+      }
+  }
+  rect(C.night, 59, bottom - 40, 1, 6);
+  if (Math.sin(t * 2) > 0.6) px(C.amber, 59, bottom - 41);
+}
+
+function drawCactus(x, sill) {
+  rect(C.oak, x, sill - 4, 6, 4);
+  rect(C.wood, x, sill - 4, 6, 1);
+  rect(C.green, x + 2, sill - 11, 2, 7);
+  rect(C.green, x + 4, sill - 9, 1, 3);
+  rect(C.green, x + 1, sill - 8, 1, 2);
+}
+
+// ---------- Wall clock with Bangkok time and weather ----------
+
+function drawClock() {
+  const bkk = bkkNow();
+  let h = bkk.getUTCHours();
+  if (!world.clock24) h = h % 12 || 12;
+  const m = bkk.getUTCMinutes(), s = bkk.getUTCSeconds();
+  const two = n => String(n).padStart(2, '0');
+
+  const x = 138, y = 26;
+  rect(C.navy, x, y, 50, 30);
+  rect(C.blue, x, y, 50, 1);
+  rect(C.night, x + 2, y + 2, 46, 26);
+  rect(C.navy, x + 4, y + 21, 42, 1);
+  text(C.green, two(h), x + 5, y + 4, 2);
+  if (s % 2 === 0) text(C.green, ':', x + 19, y + 4, 2);
+  text(C.green, two(m), x + 29, y + 4, 2);
+  text(C.amber, 'BKK', x + 5, y + 15);
+  if (!world.clock24) text(C.blue, bkk.getUTCHours() < 12 ? 'AM' : 'PM', x + 22, y + 15);
+  text(C.blue, two(s), x + 38, y + 15);
+  text(C.white, weather.temp === null ? '--C' : weather.temp + 'C', x + 5, y + 23);
+  text(wet() ? C.blue : C.amber, WEATHER_LABEL[weather.kind], x + 21, y + 23);
+}
+
+// ---------- Shelf, Raspberry Pi and portal ----------
+
+function drawShelf(t) {
+  const x = 222, y = 62, w = 82;
+  rect(C.oak, x, y, w, 3);
+  rect(C.wood, x, y + 2, w, 1);
+  rect(C.wood, x + 6, y + 3, 2, 6);
+  rect(C.wood, x + w - 8, y + 3, 2, 6);
+
+  const reading = agents.some(a => (a.action === 'read' || a.action === 'book') && a.arrived);
+  const books = [[5, 18, C.amber], [4, 15, C.blue], [6, 20, C.white], [4, 16, C.green], [5, 19, C.oak], [4, 14, C.blue], [5, 17, C.amber]];
+  let bx = x + 3;
+  books.forEach(([bw, bh, c], i) => {
+    const out = reading && i === Math.floor(t / 3) % books.length ? 3 : 0; // a book pulled out while someone reads
+    rect(c, bx, y - bh - out, bw, bh);
+    rect(C.night, bx + 1, y - bh + 3 - out, bw - 2, 1);
+    rect(C.night, bx + 1, y - 4 - out, bw - 2, 1);
+    bx += bw + 1;
+  });
+  for (let i = 0; i < 14; i++) rect(C.green, bx + 1 + Math.floor(i / 4), y - 1 - i, 4, 1);
+
+  drawRaspberryPi(x + 58, y, t);
+  drawCable();
+}
+
+function drawRaspberryPi(x, y, t) {
+  rect(C.blue, x, y - 7, 18, 7);
+  rect(C.white, x, y - 7, 18, 1);
+  rect(C.navy, x + 1, y - 5, 10, 1);
+  rect(C.white, x + 1, y - 3, 3, 2);
+  rect(C.white, x + 5, y - 3, 3, 2);
+  rect(C.navy, x + 18, y - 5, 1, 2);
+  const party = world.piParty > 0;
+  px(party ? pick([C.amber, C.green, C.white]) : Math.sin(t * 3) > -0.6 ? C.amber : C.navy, x + 14, y - 3);
+  px(hash(Math.floor(t * (party ? 30 : 12))) > 0.45 ? C.green : C.navy, x + 16, y - 3);
+}
+
+function drawCable() {
+  rect(C.navy, 309, 83, 5, 6);
+  rect(C.blue, 310, 84, 3, 4);
+  px(C.navy, 311, 85);
+  const p = cable.pts;
+  for (let i = 0; i < p.length - 1; i++) line(C.navy, p[i].x, p[i].y, p[i + 1].x, p[i + 1].y);
+}
+
+// The portal swirls on the wall; agents step out of it and walk back into it
+function drawPortal(t) {
+  const { x, y, rx, ry } = PORTAL, flare = world.portalFlare > 0;
+  for (let dy = -ry; dy <= ry; dy++)
+    for (let dx = -rx; dx <= rx; dx++) {
+      const r = Math.hypot(dx / rx, dy / ry);
+      if (r > 1) continue;
+      const a = Math.atan2(dy / ry, dx / rx), swirl = Math.sin(a * 3 + r * 9 - t * (flare ? 9 : 4));
+      let c;
+      if (r > 0.86) c = Math.floor(a * 6 / Math.PI + t * 4) % 4 === 0 ? C.white : C.blue; // rim with chasing lights
+      else if (flare && r < 0.35) c = C.white;
+      else c = swirl > 0.35 ? C.green : swirl > -0.2 ? C.navy : C.night;
+      px(c, x + dx, y + dy);
+    }
+  rect(C.navy, x - 13, 125, 26, 3);
+  rect(C.blue, x - 13, 125, 26, 1);
+}
+
+// ---------- Desk and gear ----------
+
+function drawDesk() {
+  rect(C.oak, 60, 128, 250, 4);
+  for (let x = 64; x < 306; x += 9) rect(C.wood, x, 130, 4, 1);
+  rect(C.wood, 60, 132, 250, 3);
+  rect(C.night, 60, 135, 250, 1);
+  rect(C.wood, 66, 135, 5, 25);
+  rect(C.wood, 299, 135, 5, 25);
+  rect(C.wood, 250, 135, 46, 18);
+  rect(C.oak, 252, 143, 42, 1);
+  rect(C.amber, 271, 138, 4, 1);
+  rect(C.amber, 271, 147, 4, 1);
+}
+
+function drawMoth(t) {
+  px(C.white, moth.x, moth.y);
+  if (Math.floor(t * 20) % 2) { px(C.blue, moth.x - 1, moth.y - 1); px(C.blue, moth.x + 1, moth.y - 1); }
+}
+
+const SCREEN = { idle: ['IDLE', C.blue], code: ['CODE', C.amber], run: ['RUN', C.blue], fix: ['FIX', C.amber], done: ['DONE', C.green] };
+
+// A computer shows what its agent is doing: code being typed, a command running, or DONE
+function drawMonitor(m, t) {
+  const x = m.x, y = 82, w = 54, h = 38;
+  const a = m.agent, state = a && a.action === 'work' && a.arrived && a.task ? a.task : 'idle';
+  const [label, tone] = SCREEN[state];
+  const flash = state === 'done' && Math.floor(t * 4) % 2;
+  rect(C.navy, x + 23, y + h, 8, 8);
+  rect(C.navy, x + 16, y + h + 6, 22, 2);
+  rect(C.blue, x + 16, y + h + 6, 22, 1);
+  rect(C.navy, x, y, w, h);
+  rect(flash ? C.green : C.blue, x, y, w, 1);
+  rect(C.night, x + 3, y + 3, w - 6, h - 7);
+  px(state === 'idle' ? C.navy : C.green, x + w - 4, y + h - 3);
+
+  // title bar: project on the left, state on the right
+  rect(C.navy, x + 3, y + 3, w - 6, 7);
+  text(C.white, a ? shortName(a.info.project || a.info.name, 6) : '', x + 5, y + 4);
+  text(tone, label, x + w - 4 - label.length * 4 + 1, y + 4);
+
+  const cx = x + 5, cy = y + 12;
+  if (state === 'code' || state === 'fix') drawCode(a, cx, cy, t);
+  else if (state === 'run') drawRun(a, cx, cy, t);
+  else if (state === 'done') drawDone(x + w / 2, cy, t);
+  else {
+    text(C.green, '$', cx, cy);
+    if (Math.floor(t * 2) % 2) rect(C.green, cx + 5, cy, 3, 5);
+  }
+}
+
+function drawCode(a, x, y, t) {
+  const code = a.code, total = code.reduce((n, l) => n + lineLength(l), 0);
+  let left = (a.taskTime * 22) % total;
+  const shown = [];
+  for (let i = 0; i < code.length && left > 0; i++) { const n = Math.min(left, lineLength(code[i])); shown.push([i, n]); left -= n; }
+  const rows = 7, start = Math.max(0, shown.length - rows);
+  shown.slice(start).forEach(([i, n], r) => {
+    const yy = y + r * 3;
+    rect(C.navy, x, yy, 2, 1); // line number gutter
+    for (const s of code[i]) {
+      const w = Math.min(s.w, n - s.x);
+      if (w > 0) rect(a.task === 'fix' && s.c === C.white ? C.amber : s.c, x + 4 + s.x, yy, Math.ceil(w), 1);
+    }
+  });
+  const last = shown.length - start - 1, end = shown.length ? shown[shown.length - 1][1] : 0;
+  if (Math.floor(t * 3) % 2) rect(C.green, x + 4 + end, y + Math.max(0, last) * 3 - 1, 1, 3);
+}
+
+function drawRun(a, x, y, t) {
+  text(C.white, '$', x, y);
+  rect(C.white, x + 5, y + 2, 16, 1);
+  const spin = [[0, 0], [1, 0], [1, 1], [0, 1]][Math.floor(t * 8) % 4];
+  px(C.green, x + 40 + spin[0], y + 1 + spin[1]);
+  const top = Math.floor(a.taskTime * 9);
+  for (let r = 0; r < 4; r++)
+    for (const s of runLines[(top + r) % runLines.length]) rect(s.c, x + s.x, y + 7 + r * 3, s.w, 1);
+  rect(C.navy, x, y + 19, 44, 2);
+  rect(C.green, x, y + 19, Math.round(44 * ((a.taskTime * 0.15) % 1)), 2);
+}
+
+function drawDone(cx, y, t) {
+  text(C.green, '*', cx - 4, y - 1, 3);
+  text(C.green, 'DONE', cx - 8, y + 14);
+  for (let i = 0; i < 4; i++) if (hash(Math.floor(t * 6) + i) > 0.6) px(C.white, cx - 18 + hash(i * 9) * 36, y + hash(i * 5) * 18);
+}
+
+// Laptop: how many Claude tabs (sessions) are open, with a dot for what each one is doing
+function drawLaptop(t) {
+  const x = 230, y = 104;
+  rect(C.navy, x, y, 34, 22);
+  rect(C.night, x + 2, y + 2, 30, 18);
+  rect(C.blue, x - 3, y + 22, 40, 2);
+  rect(C.navy, x - 3, y + 23, 40, 1);
+  text(C.amber, 'TABS', x + 4, y + 4);
+  text(C.green, String(world.sessions).padStart(2, '0'), x + 22, y + 4);
+  const tone = { code: C.amber, fix: C.amber, run: C.blue, read: C.white, web: C.blue, wait: C.amber, done: C.green };
+  agents.slice(0, 6).forEach((a, i) => {
+    const blink = a.activity === 'wait' && Math.floor(t * 3) % 2;
+    rect(blink ? C.night : tone[a.activity] || C.navy, x + 4 + i * 4, y + 12, 3, 3);
+    px(a.badge, x + 5 + i * 4, y + 16);
+  });
+}
+
+// Each computer has its own small keyboard; keys light up while its agent types
+function drawKeyboards(t) {
+  for (const m of monitors) {
+    const x = m.x + 15, y = 129;
+    rect(C.navy, x, y, 24, 3);
+    for (let k = 0; k < 5; k++) { px(C.blue, x + 2 + k * 4, y); px(C.blue, x + 4 + k * 4, y + 1); }
+    rect(C.blue, x + 7, y + 2, 10, 1);
+    const a = m.agent;
+    if (a && a.action === 'work' && a.arrived && a.task && a.task !== 'done')
+      px(C.white, x + 2 + Math.floor(hash(Math.floor(t * 8) + m.x) * 5) * 4, y);
+  }
+}
+
+function drawCup() {
+  const x = CUP_X, y = 118;
+  rect(C.wood, x - 2, y + 10, 13, 1);
+  rect(C.white, x, y, 9, 10);
+  rect(C.blue, x, y + 9, 9, 1);
+  rect(C.amber, x + 1, y, 7, 1);
+  rect(C.blue, x + 1, y + 4, 7, 1);
+  rect(C.white, x + 9, y + 2, 3, 1);
+  rect(C.white, x + 11, y + 2, 1, 5);
+  rect(C.white, x + 9, y + 6, 3, 1);
+  for (const p of steam) {
+    const k = p.age / p.life;
+    if (k < 0.85) px(k < 0.45 ? C.white : C.blue, p.x, p.y);
+  }
+}
+
+// Glass tank in fine pixels: shimmering water, sand and pebbles, swaying weed, a castle with a flag,
+// an air stone, bubbles, food and three fish
+function drawTank(t) {
+  const X = TANK.x * R, Y = TANK.y * R, TW = TANK.w * R, TH = TANK.h * R;
+  const top = Y + 7, sand = Y + TH - 8; // water surface and sand line, in fine pixels
+
+  // water: lighter near the surface, slow light rays drifting through it
+  frect(C.navy, X, top, TW, TH - 7);
+  for (let y = top + 1; y < sand; y++)
+    for (let x = X + 1; x < X + TW - 1; x++) {
+      const k = (y - top) / (sand - top);
+      const ray = (x + y * 0.5 + Math.floor(t * 5)) % 23 < 2 && k < 0.75 && (x + y) % 2 === 0;
+      if (ray || (k < 0.15 && (x + y) % 2 === 0) || (k < 0.45 && (x + 2 * y) % 7 === 0)) frect(C.blue, x, y);
+    }
+  // rippling surface with glints
+  for (let x = X + 1; x < X + TW - 1; x++) {
+    const y = top + Math.round(Math.sin(t * 3 + x * 0.35) * 0.8);
+    frect((x * 7 + Math.floor(t * 5)) % 19 === 0 ? C.white : C.blue, x, y);
+  }
+
+  // sand with speckles and pebbles
+  const r = rng(11);
+  frect(C.oak, X + 1, sand, TW - 2, 7);
+  for (let i = 0; i < 46; i++) {
+    const v = r(), sx = X + 1 + Math.floor(r() * (TW - 2)), sy = sand + Math.floor(r() * 7);
+    frect(v < 0.5 ? C.wood : v < 0.8 ? C.amber : C.white, sx, sy);
+  }
+  frect(C.blue, X + 47, sand - 2, 6, 3); frect(C.navy, X + 48, sand - 1, 4, 2); frect(C.white, X + 48, sand - 2, 2, 1);
+  frect(C.white, X + 9, sand - 1, 3, 1); frect(C.blue, X + 8, sand - 2, 5, 1); // air stone
+
+  // weed: each stalk sways more toward its tip, with little leaves
+  [[5, 22], [12, 14], [18, 26], [54, 18], [59, 24]].forEach(([bx, len], i) => {
+    for (let k = 0; k < len; k++) {
+      const x = X + bx + Math.sin(t * 1.4 + i * 1.7 + k * 0.22) * k * 0.13, y = sand - k;
+      frect(C.green, x, y);
+      if (k > 3 && k % 4 === 0) frect(C.green, x + (k % 8 ? 1 : -1), y - 1);
+    }
+  });
+
+  // castle: towers with battlements, an arched door, windows and a waving flag
+  const cx = X + 27, cb = sand;
+  frect(C.white, cx, cb - 10, 12, 10);
+  frect(C.white, cx - 3, cb - 15, 4, 15);
+  frect(C.white, cx + 11, cb - 15, 4, 15);
+  for (let k = 0; k < 4; k += 2) { frect(C.white, cx - 3 + k, cb - 16); frect(C.white, cx + 11 + k, cb - 16); }
+  for (let k = 0; k < 12; k += 3) frect(C.white, cx + k, cb - 11, 2, 1);
+  frect(C.blue, cx + 14, cb - 15, 1, 15);
+  frect(C.blue, cx, cb - 1, 12, 1);
+  frect(C.navy, cx + 4, cb - 6, 4, 6); frect(C.navy, cx + 5, cb - 7, 2, 1);
+  frect(C.navy, cx - 2, cb - 12, 2, 2); frect(C.navy, cx + 12, cb - 12, 2, 2);
+  frect(C.oak, cx + 12, cb - 21, 1, 5);
+  const flap = Math.floor(t * 4) % 2;
+  frect(C.amber, cx + 13, cb - 21 + flap, 3, 1); frect(C.amber, cx + 13, cb - 20, 4 - flap, 1);
+
+  // bubbles, food and fish
+  for (const b of bubbles) {
+    const bx = Math.round(b.x * R), by = Math.round(b.y * R);
+    if (b.big) { frect(C.white, bx, by - 1); frect(C.white, bx - 1, by); frect(C.white, bx + 1, by); frect(C.blue, bx, by + 1); }
+    else frect(C.white, bx, by);
+  }
+  for (const f of flakes) dot(C.amber, f.x, f.y);
+  for (const f of fishes) drawFish(f, t);
+
+  // glass, lid with its light, and the stand
+  frect(C.blue, X, Y + 5, 1, TH - 5);
+  frect(C.blue, X + TW - 1, Y + 5, 1, TH - 5);
+  frect(C.white, X + 2, Y + 9, 1, 10);
+  for (let k = 0; k < 6; k++) { frect(C.white, X + 5 + k, Y + 17 - k); frect(C.white, X + 9 + k, Y + 17 - k); }
+  frect(C.navy, X - 2, Y + 1, TW + 4, 4);
+  frect(C.blue, X - 2, Y + 1, TW + 4, 1);
+  frect(C.amber, X + 8, Y + 5, TW - 16, 1);
+  frect(C.wood, X - 2, Y + TH, TW + 4, 2);
+  frect(C.oak, X - 2, Y + TH, TW + 4, 1);
+}
+
+// A fish in fine pixels, facing the way it swims, with a wagging forked tail
+function drawFish(f, t) {
+  const dir = f.vx >= 0 ? 1 : -1, fx = Math.round(f.x * R), fy = Math.round(f.y * R);
+  const at = (ox, oy, c) => frect(c, fx + ox * dir, fy + oy);
+  for (let ox = -1; ox <= 2; ox++) { at(ox, -1, f.c); at(ox, 2, f.c); }
+  for (let ox = -2; ox <= 3; ox++) { at(ox, 0, f.c); at(ox, 1, f.c); }
+  const wag = Math.floor(t * 8 + f.y) % 2;
+  at(-3, 0, f.mark === C.blue ? C.blue : f.c); at(-3, 1, f.mark === C.blue ? C.blue : f.c);
+  at(-4, wag ? -1 : 0, f.c); at(-4, wag ? 2 : 1, f.c);
+  at(0, -2, f.mark === C.blue ? C.blue : f.c);
+  if (f.c === C.amber) for (let oy = -1; oy <= 2; oy++) at(0, oy, C.white); // clownfish stripe
+  if (f.c === C.green) for (let ox = -2; ox <= 2; ox++) at(ox, 0, C.blue);  // tetra line
+  at(2, 0, C.night);
+}
+
+// ---------- Characters ----------
+
+// The office cat: a calico built from 3D boxes in fine pixels, with pointed ears, whiskers, a nose
+// and a tail that curls up when it walks and wraps around it when it sleeps
+const PATCH = { spark: C.amber, lit: C.oak, dark: C.wood };
+
+function drawCat(t) {
+  const o = { x: cat.x, y: FLOOR_Y + cat.y }, yaw = cat.yaw;
+  const sleeping = cat.action === 'sleep';
+  const sitting = !cat.moving && !sleeping;
+  const breathe = sleeping || cat.action === 'purr' ? (Math.sin(t * 3) + 1) * 0.25 : 0;
+  rect(C.wood, Math.round(cat.x) - 7, FLOOR_Y, 14, 1);
+
+  const patches = (face, u, v, fx, fy, b) =>
+    (face === 'top' && u < 0.55 && v > 0.35) || ((face === 'left' || face === 'right') && u > 0.5 && v > 0.45)
+      ? shade(PATCH, b, fx, fy) : null;
+  const parts = [];
+
+  if (!sleeping) [[-2, -4], [2, -4], [-2, 4], [2, 4]].forEach(([lx, lz], i) => {
+    if (sitting && lz < 0) return; // back legs tucked under when sitting
+    const lift = cat.moving && (i + Math.floor(t * 10)) % 2 ? 1 : 0;
+    parts.push({ z: depth([lx, 0, lz], yaw), draw: () => {
+      const top = toScreen(o, rotY([lx, 3, lz], yaw)), foot = toScreen(o, rotY([lx, lift, lz], yaw));
+      line(C.white, ...top, ...foot, R);
+      frect(C.blue, Math.round(foot[0] * R), Math.round(foot[1] * R) + 1, 2, 1); // paw shadow
+    } });
+  });
+
+  const groom = cat.action === 'groom' && Math.floor(t * 3) % 2;
+  const [bodyPos, bodySize] = sleeping ? [[0, 0, 0], [8, 4 + breathe, 10]] : sitting ? [[0, 2, -1], [6, 6 + breathe, 7]] : [[0, 2, 0], [6, 5, 12]];
+  const headPos = sleeping ? [0, 0, 5] : sitting ? [0, 7 - groom, 3] : [0, 4, 7.5];
+  const hy = headPos[1], hz = headPos[2] + 2.5;
+  parts.push({ z: 0, draw: () => box(o, yaw, bodyPos, bodySize, MAT.cat, patches) });
+
+  parts.push({ z: depth(headPos, yaw) + 1, draw: () => {
+    box(o, yaw, headPos, [6, 5, 5], MAT.cat, (face, u, v, fx, fy, b) => face === 'top' && u > 0.5 ? shade(PATCH, b, fx, fy) : null);
+    for (const ex of [-1.8, 1.8]) catEar(toScreen(o, rotY([ex, hy + 5, headPos[2] + 0.5], yaw)), ex > 0);
+    if (rotY([0, 0, 1], yaw)[2] < 0.3) return; // face turned away
+    for (const ex of [-1.3, 1.3]) {
+      const [x, y] = toScreen(o, rotY([ex, hy + 3.2, hz], yaw));
+      if (sleeping) frect(C.blue, Math.round(x * R) - 1, Math.round(y * R) + 1, 2, 1);
+      else { frect(C.green, Math.round(x * R), Math.round(y * R), 1, 2); }
+    }
+    const [nx, ny] = toScreen(o, rotY([0, hy + 2.2, hz], yaw));
+    frect(C.amber, Math.round(nx * R), Math.round(ny * R));
+    for (const side of [-1, 1]) for (const dy of [0.3, -0.4]) {
+      const a = toScreen(o, rotY([side * 1.4, hy + 1.8, hz], yaw)), b = toScreen(o, rotY([side * 4.2, hy + 1.8 + dy, hz + 0.5], yaw));
+      line(C.white, ...a, ...b);
+    }
+  } });
+
+  // tail: three segments with an oak tip
+  const back = sleeping ? -5 : sitting ? -4.5 : -6, ty = sleeping ? 1.5 : 4.5;
+  parts.push({ z: depth([0, 0, back], yaw) - (sleeping ? 0 : 1), draw: () => {
+    const swish = Math.sin(t * (cat.action === 'purr' ? 6 : 2));
+    const pts = sleeping
+      ? [[0, ty, back], [3, ty, back - 1], [5, ty, 0], [4, ty, 3]]
+      : [[0, ty, back], [swish, ty + 2.5, back - 1.5], [swish * 2.5, ty + 5, back - 2], [swish * 3.5 + 1, ty + 6.5, back - 1.5]];
+    const sp = pts.map(p => toScreen(o, rotY(p, yaw)));
+    for (let i = 1; i < sp.length; i++) line(i === sp.length - 1 ? C.oak : C.white, ...sp[i - 1], ...sp[i], R);
+  } });
+
+  parts.sort((p, q) => p.z - q.z).forEach(p => p.draw());
+}
+
+// A pointed ear in fine pixels, leaning outward: white outside, oak inside
+function catEar([x, y], right) {
+  const fx = Math.round(x * R), fy = Math.round(y * R), s = right ? 1 : -1;
+  frect(C.white, fx - 1, fy - 1, 3, 1);
+  frect(C.oak, fx, fy - 1);
+  frect(C.white, Math.min(fx, fx + s), fy - 2, 2, 1);
+  frect(C.white, fx + s, fy - 3);
+}
+
+// Claude agents: little amber 3D blocks with an antenna in their model's colour
+function drawAgent(a, t) {
+  const s = a.scale, air = a.y < -0.5, yaw = a.yaw;
+  const crouch = !air && a.squash > 0;
+  const [w, h, d] = (crouch ? [16, 8, 11] : air ? [12, 11, 9] : [14, 10, 10]).map(v => v * s);
+  const walking = a.moving && !air;
+  const bob = walking && Math.floor(t * 8) % 2 ? 1 : 0;
+  const feet = { x: Math.round(a.x), y: bottomOf(a) }, o = { x: feet.x, y: feet.y - bob };
+  const typing = a.action === 'work' && a.arrived && a.task && a.task !== 'done';
+  const petting = a.action === 'cat' && a.arrived;
+
+  const ground = a.level === 'floor' ? FLOOR_Y : a.seat ? 131 : 128;
+  if (feet.y <= ground + 1) {
+    const sw = Math.max(4, Math.round((w + 4) * Math.max(0.4, 1 + a.y / 60)));
+    rect(C.wood, Math.round(a.x - sw / 2), ground, sw, 1);
+  }
+
+  const parts = [];
+
+  // Legs: four in a 2x2 grid; they swing over the edge when sitting and step when walking
+  [[-4, -2], [4, -2], [-4, 2], [4, 2]].forEach(([lx, lz], i) => {
+    lx *= s; lz *= s;
+    const phase = i === 0 || i === 3 ? 0 : Math.PI;
+    let len = 4, dz = 0, lift = 0;
+    if (air) len = 3;
+    else if (a.seat) { len = 5; dz = Math.sin(t * (a.action === 'sleep' ? 1.5 : 5) + phase) * 2.5; }
+    else if (walking) { dz = Math.sin(t * 12 + phase) * 1.5; lift = Math.max(0, Math.sin(t * 12 + phase)); }
+    len *= s;
+    const top = toScreen(feet, rotY([lx, 0, lz], yaw)), foot = toScreen(feet, rotY([lx, -len + lift, lz + dz], yaw));
+    parts.push({ z: depth([lx, 0, lz], yaw) - 10, draw: () => line(rotY([lx, 0, lz], yaw)[0] > 0 ? C.oak : C.amber, ...top, ...foot, R) });
+  });
+
+  // Body, antenna and face
+  parts.push({ z: 0, draw: () => {
+    box(o, yaw, [0, 0, 0], [w, h, d], MAT.claude, rimLight);
+    const [bx, by] = toScreen(o, rotY([0, h, 0], yaw));
+    line(C.oak, bx, by, bx, by - 3 * s);
+    rect(a.badge, bx - 1, by - 3 * s - 2, 2, 2);
+    if (rotY([0, 0, 1], yaw)[2] < 0.3 || s < 0.5) return; // facing away: no face to see
+    const eye = ex => toScreen(o, rotY([ex, h - 3 * s, d / 2], yaw));
+    const sleepy = a.action === 'sleep', blink = (t + a.x) % 4 < 0.12;
+    for (const ex of [-(w / 2 - 4 * s), w / 2 - 4 * s]) {
+      const [x, y] = eye(ex);
+      if (sleepy) rect(C.night, x - 1, y + 1, 2, 1);
+      else rect(C.night, x, y + (blink ? 1 : 0), 1, blink ? 1 : 2);
+    }
+    if (a.happy > 0 || a.action === 'dance') { const [x, y] = eye(0); rect(C.night, x - 1, y + 4 * s, 2, 1); }
+  } });
+
+  // Arms: wave, dance, pet the cat, type, stretch
+  const beat = Math.floor(t * 4) % 2;
+  const near = rotY([1, 0, 0], yaw)[2] > 0 ? 1 : -1;
+  for (const side of [-1, 1]) {
+    let ay = 3, az = 0;
+    if ((a.action === 'wait' || a.happy > 0 || petting) && side === near) ay = 8 + (Math.floor(t * 8) % 2);
+    if (a.action === 'dance' && (side > 0) === !!beat) ay = 9;
+    if (a.action === 'stretch') ay = 10;
+    if (typing) { ay = 4 + ((Math.floor(t * 10) + (side > 0 ? 1 : 0)) % 2) * 2; az = 3; }
+    const pos = [side * (w / 2 + s), ay * s, az * s];
+    parts.push({ z: depth(pos, yaw), draw: () => box(o, yaw, pos, [2 * s, 3 * s, 3 * s], MAT.claude) });
+  }
+  parts.sort((p, q) => p.z - q.z).forEach(p => p.draw());
+
+  // Status bubble: "!" when it needs you, "..." when thinking, "<>" or "$" while waiting for a free computer
+  const top = toScreen(o, rotY([0, h, 0], yaw))[1] - 10 * s;
+  if (a.action === 'wait' && Math.floor(t * 2) % 2) text(C.amber, '!', feet.x - 1, top - 2);
+  if (a.action === 'think' || a.action === 'busy') {
+    const word = a.action === 'busy' ? (a.activity === 'run' ? '$' : '<>') : '.'.repeat(1 + Math.floor(t * 2) % 3);
+    text(a.action === 'busy' ? C.amber : C.white, word, feet.x - word.length * 2, top - 2);
+  }
+}
+
+function drawPops() {
+  for (const p of pops) if (p.age < p.life * 0.8 || Math.floor(p.age * 10) % 2) text(p.color, p.str, p.x, p.y);
+}
+
+function drawHint(t) {
+  if (!agents.length && Math.floor(t * 2) % 2)
+    text(C.white, world.ready ? 'WAITING FOR CLAUDE' : 'READING SESSIONS', 124, 6);
+}
+
+// ---------- Main loop ----------
+
+function update(dt, t) {
+  updateSteam(dt);
+  updateMeteor(dt, t);
+  updateMoth(dt);
+  updatePops(dt);
+  updateTank(dt, t);
+  updateCat(dt, t);
+  for (const a of agents) updateAgent(a, dt, t);
+  for (let i = agents.length - 1; i >= 0; i--) if (agents[i].gone) { release(agents[i]); agents.splice(i, 1); }
+  updateRope(cable, dt);
+  updateDrops(dt);
+  updateStorm(dt, t);
+  world.piParty = Math.max(0, world.piParty - dt);
+  world.portalFlare = Math.max(0, world.portalFlare - dt);
+}
+
+function offsetX() { return Math.floor((W - SCENE_W) / 2); }
+
+function draw(t) {
+  const sk = world.sky = sky();
+  drawRoom();
+  ctx.save();
+  ctx.translate(offsetX() * R, 0);
+  drawLights(t, sk);
+  drawRug();
+  drawWindow(t, sk);
+  drawClock();
+  drawShelf(t);
+  drawPortal(t);
+  drawDesk();
+  drawMoth(t);
+  monitors.forEach(m => drawMonitor(m, t));
+  drawLaptop(t);
+  drawKeyboards(t);
+  drawTank(t);
+  drawCup();
+  for (const a of agents) if (a.level === 'desk') drawAgent(a, t);
+  drawCat(t);
+  for (const a of agents) if (a.level === 'floor') drawAgent(a, t);
+  drawPops();
+  drawHint(t);
+  ctx.restore();
+}
+
+let last = 0, acc = 0, now = 0;
+function frame(ms) {
+  now = ms / 1000;
+  acc += Math.min(0.1, now - last);
+  last = now;
+  while (acc >= STEP) { update(STEP, now); acc -= STEP; }
+  draw(now);
+  requestAnimationFrame(frame);
+}
+
+// ---------- Input: tap things in the room, hover a Claude for its card ----------
+
+function scenePoint(e) {
+  const r = canvas.getBoundingClientRect();
+  return [(e.clientX - r.left) * W / r.width - offsetX(), (e.clientY - r.top) * H / r.height];
+}
+
+function agentAt(x, y) {
+  return agents.find(a => Math.abs(x - a.x) < 10 && y > bottomOf(a) - 18 && y < bottomOf(a) + 6);
+}
+
+function showCard(a, e) {
+  const c = a.info;
+  card.replaceChildren(
+    el('div', 'name', (c.name || 'Claude') + (c.project ? ' . ' + c.project : '')),
+    el('div', 'state', c.word || c.state || ''));
+  if (c.step || c.desc) card.append(el('div', 'step', c.step || c.desc));
+  const facts = [c.turn && 'Turn ' + c.turn, c.steps && c.steps + ' steps', c.context && 'Context ' + c.context].filter(Boolean);
+  if (facts.length) card.append(el('div', 'step', facts.join('  |  ')));
+  card.style.display = 'block';
+  card.style.left = Math.min(e.clientX + 12, innerWidth - 270) + 'px';
+  card.style.top = Math.min(e.clientY + 14, innerHeight - 90) + 'px';
+}
+
+canvas.addEventListener('pointermove', e => {
+  const a = agentAt(...scenePoint(e));
+  if (a) showCard(a, e); else card.style.display = 'none';
+});
+canvas.addEventListener('pointerleave', () => { card.style.display = 'none'; });
+
+canvas.addEventListener('pointerdown', e => {
+  const [x, y] = scenePoint(e);
+  const hit = (x0, y0, x1, y1) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
+  world.tapped = true;
+  const a = agentAt(x, y);
+  if (a) {
+    showCard(a, e);
+    setTimeout(() => { card.style.display = 'none'; }, 3000);
+    pop('&', a.x - 1, bottomOf(a) - 18, C.amber);
+    a.happy = 1.5;
+    a.spin = 2 * Math.PI;
+    if (FREE_ACTIONS.includes(a.action)) startAction(a, pick(['hop', 'dance', 'stretch']));
+  }
+  else if (Math.abs(x - cat.x) < 9 && y > 152 && y < 171) { if (cat.action === 'sleep') pop('!', cat.x - 1, 146, C.amber); petCat(); }
+  else if (hit(TANK.x - 1, TANK.y, TANK.x + TANK.w, TANK.y + TANK.h)) { feedFish(); tapTank(x); }
+  else if (hit(PORTAL.x - PORTAL.rx, PORTAL.y - PORTAL.ry, PORTAL.x + PORTAL.rx, PORTAL.y + PORTAL.ry)) world.portalFlare = 1;
+  else if (hit(138, 26, 188, 56)) world.clock24 = !world.clock24;
+  else if (hit(CUP_X - 2, 110, CUP_X + 13, 128)) puffSteam(25, 12);
+  else if (hit(278, 52, 300, 62)) world.piParty = 2.5;
+  else if (hit(19, 17, 113, 93)) launchMeteor(now);
+});
+
+// Fit the panel: widen the room up to 21:9; in tall panels the session list fills the space below
+function resize() {
+  W = Math.round(Math.min(Math.max(H * innerWidth / innerHeight, SCENE_W), 420));
+  canvas.width = W * R;
+  canvas.height = H * R;
+  const s = Math.min(innerWidth / W, innerHeight / H);
+  canvas.style.width = Math.floor(W * s) + 'px';
+  canvas.style.height = Math.floor(H * s) + 'px';
+  const spare = innerHeight - Math.floor(H * s);
+  listEl.style.display = spare > 80 ? 'block' : 'none';
+  listEl.style.height = spare + 'px';
+  document.body.style.justifyContent = spare > 80 ? 'flex-start' : 'center';
+}
+
+addEventListener('resize', resize);
+resize();
+if (!params.has('noweather')) { fetchWeather(); setInterval(fetchWeather, 10 * 60e3); }
+poll();
+requestAnimationFrame(frame);
 </script>
 </body>
 </html>
