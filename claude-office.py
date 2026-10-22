@@ -3,7 +3,7 @@
 # It only reads ~/.claude/projects (see tracker.py) and costs no tokens.
 #   pythonw claude-office.py           start it, then open http://127.0.0.1:7788
 #   pythonw claude-office.py --stop    stop it
-# Pages: / the room, /?demo the room with made-up sessions.
+# Pages: / the room, /?demo the room with made-up sessions. /settings holds what the Pi on the shelf sets.
 # Only one runs at a time: a second start sees the port in use and exits.
 import json
 import os
@@ -103,7 +103,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.path = self.path.split('?', 1)[0]
-        if self.path == '/state':
+        if self.path == '/settings':
+            self.send(json.dumps(pet.settings()), 'application/json')
+        elif self.path == '/state':
             self.send(json.dumps(state(self.tracker)), 'application/json')
         elif self.path == '/quit':
             self.send('bye', 'text/plain')
@@ -114,6 +116,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(fh.read(), 'text/html; charset=utf-8')
         else:
             self.send_error(404)
+
+    def do_POST(self):
+        # settings from the room; JSON only, so another site cannot post here without asking first
+        if self.path != '/settings' or 'application/json' not in (self.headers.get('Content-Type') or ''):
+            self.send_error(404)
+            return
+        try:
+            size = int(self.headers.get('Content-Length') or 0)
+            data = json.loads(self.rfile.read(min(size, 4096)) or b'{}')
+        except ValueError:
+            self.send_error(400)
+            return
+        self.send(json.dumps(pet.save_settings(data)), 'application/json')
 
     def log_message(self, *args):
         pass

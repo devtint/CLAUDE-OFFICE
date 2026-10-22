@@ -17,10 +17,10 @@ PROJECTS = os.path.join(HOME, '.claude', 'projects')
 HERE = os.path.dirname(os.path.abspath(__file__))
 ERROR_LOG = os.path.join(HERE, 'office-error.log')
 
-ACTIVE_SECS = 10 * 60   # a session gets a Claude while its transcript changed in the last 10 min
+ACTIVE_SECS = 10 * 60   # a session gets a Claude while its transcript changed in the last 10 min (settings: idle)
 DAY = 36 * 3600         # only transcripts changed this recently are read
 WAIT_SECS = 45          # one step running this long: Claude may be waiting for you
-MAX_PETS = 8          # the room has space for eight Claudes
+MAX_PETS = 8          # the room has space for eight Claudes (settings: max)
 MAX_HELPERS = 6
 
 BG = '#1f1e1d'
@@ -77,6 +77,90 @@ PUSH_RE = re.compile(r'\bgit\b[^|;&\n]*\bpush\b')
 # the office hooks (install.py --hooks) leave one small file per session here
 HOOKS_DIR = os.path.join(HOME, '.claude', 'office-hooks')
 HOOKS_MARKER = os.path.join(HOOKS_DIR, '.installed')
+
+# ---------- Settings: set from the room (tap the Pi on the shelf), kept in one small file ----------
+
+SETTINGS_FILE = os.path.join(HOME, '.claude', 'office-settings.json')
+DEFAULTS = {
+    'tz': 'Asia/Bangkok',  # IANA time zone for the clock and the sky, or 'auto' for this computer's
+    'label': 'BKK',        # up to 4 letters under the clock
+    'city': 'Bangkok', 'lat': 13.75, 'lon': 100.5,  # where the weather comes from
+    'weather': True, 'units': 'C', 'clock24': True,
+    'alerts': False,       # chime and desktop notification when a Claude needs you
+    'idle': 10,            # minutes without changes before a session leaves the room
+    'max': 8,              # Claudes in the room at once
+    'helpers': True,       # show subagents as small Claudes
+    'calm': False,         # fewer animations, for slower computers
+}
+CHOICES = {'units': ('C', 'F'), 'idle': (5, 10, 30, 60), 'max': (2, 4, 6, 8)}
+_settings = {'mtime': None, 'data': dict(DEFAULTS)}
+
+
+def clean_settings(d):
+    """Only known keys with sensible values; anything else falls back to the default."""
+    out = dict(DEFAULTS)
+    if not isinstance(d, dict):
+        return out
+    for k, default in DEFAULTS.items():
+        v = d.get(k)
+        if v is None:
+            continue
+        if isinstance(default, bool):
+            if isinstance(v, bool):
+                out[k] = v
+        elif k in CHOICES:
+            if v in CHOICES[k] and type(v) is type(default):
+                out[k] = v
+        elif k == 'tz':
+            if isinstance(v, str) and re.fullmatch(r'auto|[A-Za-z][A-Za-z0-9_+\-]*(/[A-Za-z0-9_+\-]+){0,2}', v) and len(v) <= 40:
+                out[k] = v
+        elif k == 'label':
+            if isinstance(v, str):
+                out[k] = re.sub(r'[^A-Z0-9]', '', v.upper())[:4]
+        elif k == 'city':
+            if isinstance(v, str):
+                out[k] = ''.join(c for c in v if c.isprintable())[:40]
+        elif k in ('lat', 'lon'):
+            lim = 90 if k == 'lat' else 180
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and -lim <= v <= lim:
+                out[k] = round(float(v), 4)
+    return out
+
+
+def settings():
+    """The saved settings, read again only when the file changes."""
+    try:
+        mtime = os.stat(SETTINGS_FILE).st_mtime
+    except OSError:
+        mtime = 0
+    if mtime != _settings['mtime']:
+        data = {}
+        if mtime:
+            try:
+                with open(SETTINGS_FILE, encoding='utf-8') as fh:
+                    data = json.load(fh)
+            except (OSError, ValueError):
+                data = {}
+        _settings.update(mtime=mtime, data=clean_settings(data))
+    return _settings['data']
+
+
+def save_settings(d):
+    data = clean_settings(d)
+    os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+    with open(SETTINGS_FILE + '.tmp', 'w', encoding='utf-8') as fh:
+        json.dump(data, fh, indent=2)
+    os.replace(SETTINGS_FILE + '.tmp', SETTINGS_FILE)
+    return data
+
+
+def apply_settings():
+    """How long sessions stay and how many Claudes fit, from the settings."""
+    global ACTIVE_SECS, MAX_PETS, MAX_HELPERS
+    st = settings()
+    ACTIVE_SECS = st['idle'] * 60
+    MAX_PETS = st['max']
+    MAX_HELPERS = 6 if st['helpers'] else 0
 # helpers
 
 def tool_word(name):
@@ -471,6 +555,7 @@ class Tracker(threading.Thread):
 
     def scan(self):
         now = time.time()
+        apply_settings()
         try:
             folders = [d.path for d in os.scandir(PROJECTS) if d.is_dir()]
         except OSError:

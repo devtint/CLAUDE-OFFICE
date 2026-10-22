@@ -22,12 +22,53 @@
   #card { position: fixed; display: none; max-width: 260px; z-index: 2; pointer-events: none;
     background: #1a2347; border: 1px solid #6fa8dc; padding: 7px 9px; }
   #card div { word-break: break-word; }
+  #settings { position: fixed; inset: 0; z-index: 3; display: none; align-items: center; justify-content: center;
+    background: rgba(11, 16, 38, 0.72); }
+  #settings.open { display: flex; }
+  #settings .box { width: min(330px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow-y: auto; box-sizing: border-box;
+    background: #0b1026; border: 2px solid #6fa8dc; box-shadow: 4px 4px 0 #1a2347; padding: 10px 12px 12px; }
+  #settings .head { display: flex; justify-content: space-between; align-items: center; color: #f2a33a; letter-spacing: 1px; }
+  #settings h3 { margin: 12px 0 5px; font-size: 11px; color: #3ef07a; letter-spacing: 1px; font-weight: normal; }
+  #settings label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 5px 0; }
+  #settings label.check { justify-content: flex-start; }
+  #settings input, #settings select, #settings button { font: inherit; color: #f1ead8; background: #1a2347;
+    border: 1px solid #6fa8dc; border-radius: 0; padding: 3px 5px; }
+  #settings select, #settings input[type=text] { width: 160px; box-sizing: border-box; }
+  #settings input[type=checkbox] { accent-color: #f2a33a; margin: 0; }
+  #settings button { color: #f2a33a; cursor: pointer; }
+  #settings .city { display: flex; gap: 4px; width: 160px; }
+  #settings .city input { width: 0; flex: 1; }
+  #settings #sResults button { display: block; width: 100%; text-align: left; margin-top: 3px; color: #f1ead8; }
+  #settings .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
+  #settings .note { color: #6fa8dc; font-size: 11px; }
 </style>
 </head>
 <body>
 <canvas id="scene"></canvas>
 <div id="list"></div>
 <div id="card"></div>
+<div id="settings">
+  <div class="box" role="dialog" aria-label="Settings">
+    <div class="head"><span>SETTINGS</span><button id="sClose" aria-label="Close">X</button></div>
+    <h3>CLOCK</h3>
+    <label>Time zone <select id="sTz"></select></label>
+    <label>Label <input type="text" id="sLabel" maxlength="4"></label>
+    <label class="check"><input type="checkbox" id="sClock24"> 24-hour clock</label>
+    <h3>WEATHER</h3>
+    <label class="check"><input type="checkbox" id="sWeather"> Live weather in the window</label>
+    <label>City <span class="city"><input type="text" id="sCity" maxlength="40"><button id="sFind">FIND</button></span></label>
+    <div id="sResults"></div>
+    <label>Units <select id="sUnits"><option value="C">Celsius</option><option value="F">Fahrenheit</option></select></label>
+    <h3>ALERTS</h3>
+    <label class="check"><input type="checkbox" id="sAlerts"> Chime and notify when a Claude needs you</label>
+    <h3>ROOM</h3>
+    <label>Leave after idle <select id="sIdle"><option value="5">5 min</option><option value="10">10 min</option><option value="30">30 min</option><option value="60">60 min</option></select></label>
+    <label>Claudes at once <select id="sMax"><option>2</option><option>4</option><option>6</option><option>8</option></select></label>
+    <label class="check"><input type="checkbox" id="sHelpers"> Show subagents</label>
+    <label class="check"><input type="checkbox" id="sCalm"> Calm mode (fewer animations)</label>
+    <div class="foot"><span class="note" id="sNote"></span><button id="sReset">RESET</button></div>
+  </div>
+</div>
 <script>
 // Claude Office: one pixel room shared by every active Claude Code session.
 // Each session is a Claude agent. It comes in through the portal, takes one of the two computers to
@@ -36,6 +77,7 @@
 // and the window. When the session ends it leaves through the portal.
 // The page polls /state (see claude-office.py). Everything else runs here, so it costs no tokens.
 // URL options: ?demo (made-up sessions), ?hour=21 and ?weather=rain (preview the sky), ?noweather.
+// Settings (time zone, weather city, units, alerts, room): tap the Raspberry Pi on the shelf.
 
 // Internal resolution: the room is laid out on 320x180 and widens to match wide screens.
 // The canvas has R fine pixels per room pixel, so detailed things (the 3D agents and cat, the fish
@@ -315,7 +357,7 @@ const clouds = [
 ];
 const runLines = makeLines(42, 64, 40, 0.15);
 
-const world = { clock24: true, piParty: 0, tapped: false, portalFlare: 0, sessions: 0, ready: true, today: null, mailFlag: 0 };
+const world = { frames: 0, piParty: 0, tapped: false, portalFlare: 0, sessions: 0, ready: true, today: null, mailFlag: 0 };
 const steam = [];
 const pops = [];
 const drops = [];
@@ -324,17 +366,39 @@ const meteor = { active: false, next: 5, x: 0, y: 0, vx: 0, vy: 0, age: 0 };
 const moth = { x: PORTAL.x, y: PORTAL.y, vx: 0, vy: 0 };
 const cable = makeRope(298, 58, 311, 85, 12, 40);
 
+// Settings, the same as DEFAULTS in tracker.py; loaded from /settings (see the Settings panel below)
+const DEFAULTS = { tz: 'Asia/Bangkok', label: 'BKK', city: 'Bangkok', lat: 13.75, lon: 100.5, weather: true, units: 'C',
+  clock24: true, alerts: false, idle: 10, max: 8, helpers: true, calm: false };
+const cfg = Object.assign({}, DEFAULTS);
+
 function pop(str, x, y, color, life = 1.4) {
   pops.push({ str, x, y, color, age: 0, life });
 }
 
-// ---------- Bangkok time (UTC+7) drives the clock and the sky ----------
+// ---------- Room time (Bangkok unless set otherwise) drives the clock and the sky ----------
 
 const forcedHour = parseFloat(params.get('hour'));
 const SUNRISE = 6.2, SUNSET = 18.3, TWILIGHT = 0.7;
 
-function bkkNow() {
-  const d = new Date(Date.now() + 7 * 3600e3);
+const zoneName = () => cfg.tz === 'auto' ? Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' : cfg.tz;
+
+// How far the zone is ahead of UTC right now, in ms (daylight saving included)
+function zoneOffset(tz, ms) {
+  try {
+    const f = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric',
+      day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+    const p = {};
+    for (const x of f.formatToParts(ms)) p[x.type] = +x.value;
+    return Date.UTC(p.year, p.month - 1, p.day, p.hour % 24, p.minute, p.second) - Math.floor(ms / 1000) * 1000;
+  } catch (e) { return 7 * 3600e3; } // unknown zone: Bangkok
+}
+
+// A Date whose UTC fields read as the room's wall clock
+let zoneCache = { key: '', off: 0 };
+function roomNow() {
+  const ms = Date.now(), tz = zoneName(), key = tz + Math.floor(ms / 60e3);
+  if (zoneCache.key !== key) zoneCache = { key, off: zoneOffset(tz, ms) };
+  const d = new Date(ms + zoneCache.off);
   if (!isNaN(forcedHour)) d.setUTCHours(Math.floor(forcedHour), Math.round((forcedHour % 1) * 60));
   return d;
 }
@@ -345,7 +409,7 @@ function arc(p) {
 }
 
 function sky() {
-  const d = bkkNow(), h = d.getUTCHours() + d.getUTCMinutes() / 60 + d.getUTCSeconds() / 3600;
+  const d = roomNow(), h = d.getUTCHours() + d.getUTCMinutes() / 60 + d.getUTCSeconds() / 3600;
   const rise = weather.sunrise ?? SUNRISE, set = weather.sunset ?? SUNSET;
   const day = h >= rise && h < set;
   const twilight = Math.min(Math.abs(h - rise), Math.abs(h - set)) < TWILIGHT;
@@ -362,7 +426,7 @@ function moonPhase() {
 
 function moonLight() { return (1 - Math.cos(moonPhase() * 2 * Math.PI)) / 2; }
 
-// ---------- Bangkok weather (Open-Meteo, every 10 minutes; ?noweather turns it off) ----------
+// ---------- Weather where the room is (Open-Meteo, every 10 minutes; off in settings or with ?noweather) ----------
 
 const forcedWeather = params.get('weather');
 const weather = { kind: forcedWeather || 'clear', temp: null, cloud: 20, wind: 5, precip: 0, sunrise: null, sunset: null };
@@ -379,11 +443,18 @@ function weatherKind(code) {
   return 'clear';
 }
 
+const weatherOn = () => cfg.weather && !params.has('noweather');
+
 async function fetchWeather() {
+  if (!weatherOn()) {
+    Object.assign(weather, { kind: forcedWeather || 'clear', temp: null, cloud: 20, wind: 5, precip: 0, sunrise: null, sunset: null });
+    return;
+  }
   try {
-    const url = 'https://api.open-meteo.com/v1/forecast?latitude=13.75&longitude=100.5'
+    // sunrise and sunset come back in the room's time zone, so the sky lines up with the clock
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${cfg.lat}&longitude=${cfg.lon}`
       + '&current=temperature_2m,weather_code,cloud_cover,wind_speed_10m,precipitation'
-      + '&daily=sunrise,sunset&timezone=Asia%2FBangkok&forecast_days=1';
+      + '&daily=sunrise,sunset&timezone=' + encodeURIComponent(zoneName()) + '&forecast_days=1';
     const d = await (await fetch(url)).json();
     const hours = iso => +iso.slice(11, 13) + iso.slice(14, 16) / 60;
     Object.assign(weather, {
@@ -456,7 +527,7 @@ function launchMeteor(t) {
 }
 
 function updateMeteor(dt, t) {
-  if (!meteor.active && t > meteor.next && !world.sky?.day && !dull()) launchMeteor(t);
+  if (!meteor.active && t > meteor.next && !world.sky?.day && !dull() && !cfg.calm) launchMeteor(t);
   if (!meteor.active) return;
   meteor.vy += 40 * dt;
   meteor.x += meteor.vx * dt; meteor.y += meteor.vy * dt; meteor.age += dt;
@@ -475,7 +546,7 @@ let dropBudget = 0;
 function updateDrops(dt) {
   const snow = weather.kind === 'snow';
   const rate = weather.kind === 'storm' ? 150 : weather.kind === 'rain' ? (weather.precip > 1 ? 110 : 70) : snow ? 14 : 0;
-  for (dropBudget += rate * dt; dropBudget >= 1; dropBudget--)
+  for (dropBudget += rate * (cfg.calm ? 0.4 : 1) * dt; dropBudget >= 1; dropBudget--)
     drops.push({ x: rand(10, 125), y: 18, vx: snow ? rand(-4, 4) : -weather.wind * 1.5, vy: snow ? rand(8, 14) : rand(110, 150), snow });
   for (const d of drops) {
     if (d.snow) d.vx = (d.vx + rand(-25, 25) * dt) * 0.98;
@@ -1019,8 +1090,7 @@ function yawTarget(a, t) {
 
 // ---------- Alerts: a soft chime and a desktop notification when someone needs you (opt-in) ----------
 
-const alerts = { on: false, audio: null };
-try { alerts.on = localStorage.getItem('office-alerts') === 'on'; } catch (e) { /* storage blocked */ }
+const alerts = { audio: null };
 
 function chime() {
   try {
@@ -1037,18 +1107,9 @@ function chime() {
   } catch (e) { /* no audio */ }
 }
 
-function toggleAlerts() {
-  alerts.on = !alerts.on;
-  try { localStorage.setItem('office-alerts', alerts.on ? 'on' : 'off'); } catch (e) { /* storage blocked */ }
-  if (alerts.on) {
-    chime();
-    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
-  }
-  pop(alerts.on ? 'ON' : 'OFF', COMM.x + 8, 140, alerts.on ? C.green : C.blue);
-}
 
 function announce(a) {
-  if (!alerts.on) return;
+  if (!cfg.alerts) return;
   chime();
   try {
     if ('Notification' in window && Notification.permission === 'granted')
@@ -1063,7 +1124,8 @@ function sync(list) {
   world.sessions = list.length;
   // busy sessions first, so idle ones are the ones left out when the room is full
   const order = { working: 0, error: 0, waiting: 1, thinking: 2, done: 3 };
-  const shown = [...list].sort((p, q) => (order[p.state] ?? 4) - (order[q.state] ?? 4)).slice(0, MAX_AGENTS);
+  const shown = list.filter(c => cfg.helpers || !c.parent)
+    .sort((p, q) => (order[p.state] ?? 4) - (order[q.state] ?? 4)).slice(0, Math.min(MAX_AGENTS, cfg.max));
   const ids = new Set(shown.map(c => c.id));
   for (const c of shown) applyState(agents.find(a => a.id === c.id) || spawnAgent(c), c);
   for (const a of agents) if (!ids.has(a.id) && a.action !== 'leave') { a.task = null; startAction(a, 'leave'); }
@@ -1112,6 +1174,123 @@ async function poll() {
     if (params.has('app')) window.close();
   }
   setTimeout(poll, 1500);
+}
+
+// ---------- Settings panel (tap the Pi): saved by the server in ~/.claude/office-settings.json ----------
+// Without the server (a plain copy of the page) they stay in this browser instead.
+
+const panel = document.getElementById('settings');
+const $ = id => document.getElementById(id);
+const STORE = 'office-settings';
+
+async function loadSettings() {
+  let d = null;
+  try { d = await (await fetch('/settings', { cache: 'no-store' })).json(); } catch (e) { /* no server */ }
+  if (!d) try { d = JSON.parse(localStorage.getItem(STORE) || 'null'); } catch (e) { /* storage blocked */ }
+  Object.assign(cfg, d || {});
+  fetchWeather();
+}
+
+let saveTimer = 0;
+function saveSettings() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try {
+      const r = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) });
+      if (!r.ok) throw new Error(r.status);
+      Object.assign(cfg, await r.json());
+      $('sNote').textContent = 'Saved';
+    } catch (e) {
+      try { localStorage.setItem(STORE, JSON.stringify(cfg)); $('sNote').textContent = 'Saved in this browser'; }
+      catch (e2) { $('sNote').textContent = 'Could not save'; }
+    }
+  }, 250);
+}
+
+function zoneList() {
+  let zones = [];
+  try { zones = Intl.supportedValuesOf('timeZone'); } catch (e) { /* older browser */ }
+  if (!zones.length) zones = ['Asia/Bangkok', 'Asia/Tokyo', 'Asia/Singapore', 'Asia/Kolkata', 'Europe/London', 'Europe/Berlin',
+    'America/New_York', 'America/Chicago', 'America/Los_Angeles', 'Australia/Sydney', 'UTC'];
+  if (cfg.tz !== 'auto' && !zones.includes(cfg.tz)) zones = [cfg.tz, ...zones];
+  const here = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  $('sTz').replaceChildren(new Option(`This computer (${here})`, 'auto'), ...zones.map(z => new Option(z.replace(/_/g, ' '), z)));
+}
+
+function fillPanel() {
+  zoneList();
+  $('sTz').value = cfg.tz;
+  $('sLabel').value = cfg.label;
+  $('sClock24').checked = cfg.clock24;
+  $('sWeather').checked = cfg.weather;
+  $('sCity').value = cfg.city;
+  $('sUnits').value = cfg.units;
+  $('sAlerts').checked = cfg.alerts;
+  $('sIdle').value = String(cfg.idle);
+  $('sMax').value = String(cfg.max);
+  $('sHelpers').checked = cfg.helpers;
+  $('sCalm').checked = cfg.calm;
+  $('sResults').replaceChildren();
+  $('sNote').textContent = params.has('noweather') ? '?noweather is on' : '';
+}
+
+function openSettings() {
+  fillPanel();
+  panel.classList.add('open');
+  card.style.display = 'none';
+}
+
+function closeSettings() { panel.classList.remove('open'); }
+
+// Look a city up with Open-Meteo's free geocoding; only runs when FIND is pressed
+async function findCity() {
+  const name = $('sCity').value.trim();
+  const out = $('sResults');
+  if (name.length < 2) return;
+  out.replaceChildren(el('div', 'note', 'Looking...'));
+  try {
+    const d = await (await fetch('https://geocoding-api.open-meteo.com/v1/search?count=5&language=en&format=json&name='
+      + encodeURIComponent(name))).json();
+    const found = d.results || [];
+    out.replaceChildren(...(found.length ? found.map(c => {
+      const b = el('button', '', [c.name, c.admin1, c.country].filter(Boolean).join(', '));
+      b.onclick = () => {
+        Object.assign(cfg, { city: c.name, lat: +c.latitude.toFixed(4), lon: +c.longitude.toFixed(4) });
+        if (c.timezone) cfg.tz = c.timezone;
+        cfg.label = c.name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3) || cfg.label;
+        fillPanel();
+        fetchWeather();
+        saveSettings();
+      };
+      return b;
+    }) : [el('div', 'note', 'No city found')]));
+  } catch (e) { out.replaceChildren(el('div', 'note', 'Could not reach the city search')); }
+}
+
+function bindSettings() {
+  const on = (id, ev, f) => $(id).addEventListener(ev, () => { f($(id)); saveSettings(); });
+  on('sTz', 'change', e => { cfg.tz = e.value; fetchWeather(); });
+  on('sLabel', 'input', e => { cfg.label = e.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4); });
+  on('sClock24', 'change', e => { cfg.clock24 = e.checked; });
+  on('sWeather', 'change', e => { cfg.weather = e.checked; fetchWeather(); });
+  on('sUnits', 'change', e => { cfg.units = e.value; });
+  on('sAlerts', 'change', e => {
+    cfg.alerts = e.checked;
+    if (cfg.alerts) {
+      chime();
+      if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+    }
+  });
+  on('sIdle', 'change', e => { cfg.idle = +e.value; });
+  on('sMax', 'change', e => { cfg.max = +e.value; });
+  on('sHelpers', 'change', e => { cfg.helpers = e.checked; });
+  on('sCalm', 'change', e => { cfg.calm = e.checked; });
+  $('sFind').addEventListener('click', findCity);
+  $('sCity').addEventListener('keydown', e => { if (e.key === 'Enter') findCity(); });
+  $('sReset').addEventListener('click', () => { Object.assign(cfg, DEFAULTS); fillPanel(); fetchWeather(); saveSettings(); });
+  $('sClose').addEventListener('click', closeSettings);
+  panel.addEventListener('pointerdown', e => { if (e.target === panel) closeSettings(); });
+  addEventListener('keydown', e => { if (e.key === 'Escape') closeSettings(); });
 }
 
 // ---------- Session list (shown under the room in tall panels) ----------
@@ -1305,13 +1484,13 @@ function drawCactus(x, sill) {
   rect(C.green, x + 1, sill - 8, 1, 2);
 }
 
-// ---------- Wall clock with Bangkok time and weather ----------
+// ---------- Wall clock with the room's time and weather ----------
 
 function drawClock() {
-  const bkk = bkkNow();
-  let h = bkk.getUTCHours();
-  if (!world.clock24) h = h % 12 || 12;
-  const m = bkk.getUTCMinutes(), s = bkk.getUTCSeconds();
+  const d = roomNow();
+  let h = d.getUTCHours();
+  if (!cfg.clock24) h = h % 12 || 12;
+  const m = d.getUTCMinutes(), s = d.getUTCSeconds();
   const two = n => String(n).padStart(2, '0');
 
   const x = 138, y = 26;
@@ -1322,10 +1501,11 @@ function drawClock() {
   text(C.green, two(h), x + 5, y + 4, 2);
   if (s % 2 === 0) text(C.green, ':', x + 19, y + 4, 2);
   text(C.green, two(m), x + 29, y + 4, 2);
-  text(C.amber, 'BKK', x + 5, y + 15);
-  if (!world.clock24) text(C.blue, bkk.getUTCHours() < 12 ? 'AM' : 'PM', x + 22, y + 15);
+  text(C.amber, cfg.label, x + 5, y + 15);
+  if (!cfg.clock24) text(C.blue, d.getUTCHours() < 12 ? 'AM' : 'PM', x + 22, y + 15);
   text(C.blue, two(s), x + 38, y + 15);
-  text(C.white, weather.temp === null ? '--C' : weather.temp + 'C', x + 5, y + 23);
+  const temp = weather.temp === null ? '--' : cfg.units === 'F' ? Math.round(weather.temp * 9 / 5 + 32) : weather.temp;
+  text(C.white, temp + cfg.units, x + 5, y + 23);
   text(wet() ? C.blue : C.amber, WEATHER_LABEL[weather.kind], x + 21, y + 23);
 }
 
@@ -1358,7 +1538,9 @@ function drawRaspberryPi(x, y, t) {
   rect(C.blue, x, y - 7, 18, 7);
   rect(C.white, x, y - 7, 18, 1);
   rect(C.navy, x + 1, y - 5, 10, 1);
-  rect(C.white, x + 1, y - 3, 3, 2);
+  // a tiny gear in place of the first port: tap the Pi for settings
+  const gear = ['.#.#.', '#####', '##.##', '#####', '.#.#.'], g = panel.classList.contains('open') ? C.amber : C.white;
+  gear.forEach((row, j) => [...row].forEach((ch, i) => { if (ch === '#') dot(g, x + 1 + i / 2, y - 3.5 + j / 2); }));
   rect(C.white, x + 5, y - 3, 3, 2);
   rect(C.navy, x + 18, y - 5, 1, 2);
   const party = world.piParty > 0;
@@ -1835,9 +2017,9 @@ function drawBoard(t) {
   });
 }
 
-// Wall calendar with the Bangkok date
+// Wall calendar with the room's date
 function drawCalendar() {
-  const d = bkkNow(), x = 194, y = 28;
+  const d = roomNow(), x = 194, y = 28;
   rect(C.white, x, y, 22, 25);
   rect(C.amber, x, y, 22, 7);
   text(C.white, MONTHS[d.getUTCMonth()], x + 5, y + 1);
@@ -1885,7 +2067,7 @@ function drawComm(t) {
   rect(C.navy, x + 3, 147, 20, 9);
   rect(C.blue, x + 3, 147, 20, 1);
   rect(C.night, x + 5, 149, 13, 6);
-  if (alerts.on) rect(C.amber, x + 4, 147.5, 1, 1); // little light: alerts are on
+  if (cfg.alerts) rect(C.amber, x + 4, 147.5, 1, 1); // little light: alerts are on
   if (calling) { if (Math.floor(t * 3) % 2) text(C.amber, 'ASK', x + 6, 150); }
   else { text(C.green, 'OK', x + 6, 150); }
   for (let k = 0; k < 3; k++) for (let j = 0; j < 2; j++) dot(C.blue, x + 19.5 + j, 149.5 + k * 1.5); // speaker grille
@@ -1925,7 +2107,7 @@ function drawPops() {
 function update(dt, t) {
   updateSteam(dt);
   updateMeteor(dt, t);
-  updateMoth(dt);
+  if (!cfg.calm) updateMoth(dt);
   updatePops(dt);
   updateTank(dt, t);
   updateCat(dt, t);
@@ -1956,7 +2138,7 @@ function draw(t) {
   drawShelf(t);
   drawPortal(t);
   drawDesk();
-  drawMoth(t);
+  if (!cfg.calm) drawMoth(t);
   monitors.forEach(m => drawMonitor(m, t));
   drawLaptop(t);
   drawKeyboards(t);
@@ -1977,7 +2159,7 @@ function frame(ms) {
   acc += Math.min(0.1, now - last);
   last = now;
   while (acc >= STEP) { update(STEP, now); acc -= STEP; }
-  draw(now);
+  if (!cfg.calm || ++world.frames % 2) draw(now); // calm mode draws at half the frame rate
   requestAnimationFrame(frame);
 }
 
@@ -2027,9 +2209,9 @@ canvas.addEventListener('pointerdown', e => {
     a.spin = 2 * Math.PI;
     if (FREE_ACTIONS.includes(a.action)) startAction(a, pick(['hop', 'dance', 'stretch']));
   }
-  else if (hit(COMM.x, 136, COMM.x + 26, 168)) { // shows who is asking, or turns the alerts on and off
+  else if (hit(COMM.x, 136, COMM.x + 26, 168)) { // shows who is asking
     const caller = callQueue()[0];
-    if (caller) showCard(caller, e); else toggleAlerts();
+    if (caller) showCard(caller, e);
   }
   else if (hit(BOARD.x, BOARD.y, BOARD.x + BOARD.w, BOARD.y + BOARD.h)) {
     const boards = planners();
@@ -2038,9 +2220,9 @@ canvas.addEventListener('pointerdown', e => {
   else if (Math.abs(x - cat.x) < 9 && y > 152 && y < 171) { if (cat.action === 'sleep') pop('!', cat.x - 1, 146, C.amber); petCat(); }
   else if (hit(TANK.x - 1, TANK.y, TANK.x + TANK.w, TANK.y + TANK.h)) { feedFish(); tapTank(x); }
   else if (hit(PORTAL.x - PORTAL.rx, PORTAL.y - PORTAL.ry, PORTAL.x + PORTAL.rx, PORTAL.y + PORTAL.ry)) world.portalFlare = 1;
-  else if (hit(138, 26, 188, 56)) world.clock24 = !world.clock24;
+  else if (hit(138, 26, 188, 56)) { cfg.clock24 = !cfg.clock24; saveSettings(); }
   else if (hit(CUP_X - 2, 110, CUP_X + 13, 128)) puffSteam(25, 12);
-  else if (hit(278, 52, 300, 62)) world.piParty = 2.5;
+  else if (hit(278, 52, 300, 62)) { world.piParty = 0.6; openSettings(); } // the Pi runs the room: its settings
   else if (hit(19, 17, 113, 93)) launchMeteor(now);
 });
 
@@ -2060,7 +2242,9 @@ function resize() {
 
 addEventListener('resize', resize);
 resize();
-if (!params.has('noweather')) { fetchWeather(); setInterval(fetchWeather, 10 * 60e3); }
+bindSettings();
+loadSettings();
+setInterval(fetchWeather, 10 * 60e3);
 poll();
 requestAnimationFrame(frame);
 </script>

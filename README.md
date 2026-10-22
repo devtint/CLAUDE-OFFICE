@@ -25,8 +25,7 @@ Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packag
 - **The intercom:** when a session needs your approval or asks you a question, its Claude goes to
   the intercom by the window, sits down with the handset and asks "OK?". The beacon flashes and the
   screen shows `ASK`; others who need you queue beside it. Tap the intercom to see what it is
-  asking, or tap it when nobody is calling to turn on a soft chime and a desktop notification
-  for when someone needs you. Questions (`AskUserQuestion`) and plans to approve (`ExitPlanMode`)
+  asking. A soft chime and a desktop notification can be turned on in the settings. Questions (`AskUserQuestion`) and plans to approve (`ExitPlanMode`)
   count straight away. With the hooks installed (below), permission prompts count the moment they
   appear; without them, a step that has waited 45 seconds counts.
 - **The rest of the room:** reading files sends an agent to the bookshelf, web tools to the
@@ -46,9 +45,10 @@ Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packag
   the calendar, and teammates on the same project chat in their free time.
 - **Free time** after a task: feed or tap the fish tank, pet the cat, sip tea, read a book,
   watch the sky (more often when it rains), stretch, dance or high-five another free agent.
-- **A live window:** the clock, sun, moon (in its real phase), stars and city lights follow
-  Bangkok time (UTC+7), and the sky follows the current Bangkok weather: rain, storms with
-  lightning, fog and clouds.
+- **A live window:** the clock, sun, moon (in its real phase), stars and city lights follow the
+  room's time zone (Bangkok unless you change it), and the sky follows the live weather of the
+  room's city: rain, storms with lightning, fog and clouds.
+- **Settings:** tap the Raspberry Pi on the shelf (the one with the little gear). See Settings below.
 - Hover or tap a Claude for its card: model, project, state, current step, turn time and context
   use. In a tall side panel the sessions are also listed under the room.
 - Tap things: the cat purrs, the tank gets fed, the cup steams, the window gets a shooting star, the
@@ -108,15 +108,17 @@ https://github.com/devtint/CLAUDE-OFFICE
 7. Check that http://127.0.0.1:7788/state answers with JSON. If you are in the Claude desktop
    app, open http://127.0.0.1:7788 in the built-in browser panel.
 8. Tell me it is updated, that "start the office" and "stop the office" work as before, that
-   http://127.0.0.1:7788/?demo shows made-up sessions to try it, and that tapping the intercom
-   turns alert sounds on or off.
+   http://127.0.0.1:7788/?demo shows made-up sessions to try it, and that tapping the Raspberry Pi
+   on the shelf opens the settings (time zone, weather city, units, alerts and more).
 ```
 
 What changed since the open-plan office:
 
 - It is now one room. The old `/rooms` and `/simple` pages are gone.
-- The clock, sky and weather follow Bangkok. The page asks Open-Meteo for the Bangkok weather
-  every 10 minutes and sends nothing about you or your sessions; `?noweather` turns it off.
+- The clock, sky and weather follow Bangkok by default; tap the Raspberry Pi on the shelf to pick
+  another time zone and city. The page asks Open-Meteo for that city's weather every 10 minutes and
+  sends nothing about you or your sessions; it can be turned off in the settings or with `?noweather`.
+- Alert sounds moved from the intercom to the settings.
 - After adding the hooks, restart Claude Code (or start a new session) so it picks them up.
 
 ## Install
@@ -175,27 +177,51 @@ Add these to the address to try things out:
 | Option | What it does |
 |---|---|
 | `/?demo` | Made-up sessions that come and go, to try it without Claude Code running |
-| `?hour=21` | Shows the sky at another time of day (Bangkok time) |
+| `?hour=21` | Shows the sky at another time of day (in the room's time zone) |
 | `?weather=storm` | Shows a weather: `clear`, `cloudy`, `overcast`, `fog`, `rain`, `storm` or `snow` |
 | `?noweather` | Turns off the weather request (see below) |
+
+## Settings
+
+Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes apply at once.
+
+| Setting | What it does |
+|---|---|
+| Time zone | The clock, calendar and sky follow it. Bangkok by default, or "This computer" |
+| Label | Up to 4 letters under the clock, like `BKK` or `TOK` |
+| 24-hour clock | Off shows 12 hours with AM/PM (tapping the clock switches it too) |
+| Live weather | Turns the weather request on or off |
+| City | Type a city and press FIND, then pick it. Sets the weather, time zone and label |
+| Units | Celsius or Fahrenheit |
+| Alerts | A soft chime and a desktop notification when a Claude needs you |
+| Leave after idle | How long a quiet session stays in the room: 5, 10, 30 or 60 minutes |
+| Claudes at once | 2, 4, 6 or 8 |
+| Show subagents | Helpers as small Claudes, or hidden |
+| Calm mode | No meteors or moth, lighter rain, half the frame rate, for slower computers |
+
+They are saved in `~/.claude/office-settings.json`, so the desktop window, the side panel and the
+tracker all share them. RESET goes back to the defaults. The city search uses Open-Meteo's free
+geocoding and runs only when you press FIND.
 
 ## How it works
 
 - `tracker.py` reads the session transcripts once a second (only those changed in the last 36 hours)
   and works out each session's model, state, current tool, recent steps, task list, tests, commits and
-  pushes. A session stays in the room while its transcript changed in the last 10 minutes.
+  pushes. A session stays in the room while its transcript changed in the last 10 minutes (see
+  Settings).
 - `office-hook.py` is the optional Claude Code hook (see Install).
-- `claude-office.py` is a small local server on `127.0.0.1:7788`. It serves the room and `/state`
-  (the sessions as JSON). It only listens on your own computer, and only one runs at a time.
+- `claude-office.py` is a small local server on `127.0.0.1:7788`. It serves the room, `/state`
+  (the sessions as JSON) and `/settings`. It only listens on your own computer, and only one runs at a time.
 - `workspace.html` is the room: a 320x180 pixel canvas scaled up crisp, drawn in eight colours with
   a tiny 3D renderer for the agents and the cat. It polls `/state` every 1.5 seconds and turns each
   session's state and tool into what its agent does. All the animation, physics and free-time
   behaviour runs in the page.
 - `open-office.pyw` is the launcher, and `install.py` makes the shortcuts.
 
-The one request the page makes outside your computer is the Bangkok weather from
-[Open-Meteo](https://open-meteo.com) (no key, no account, nothing about you or your sessions is
-sent), every 10 minutes. Add `?noweather` to the address to turn it off.
+The one request the page makes outside your computer is the weather for the room's city (Bangkok
+by default) from [Open-Meteo](https://open-meteo.com) (no key, no account, nothing about you or
+your sessions is sent), every 10 minutes, plus a city search when you press FIND in the settings.
+Turn the weather off in the settings, or add `?noweather` to the address.
 
 If something goes wrong, the last error is kept in `office-error.log` next to the scripts.
 

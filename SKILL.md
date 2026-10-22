@@ -12,12 +12,15 @@ leave through it when it ends. They use the two computers to write code (CODE) a
 go to the intercom to ask the user when they need approval or have a question, and sleep on the
 desk when idle. In free time they feed the
 fish, pet the cat, sip tea, read, watch the sky or high-five each other. The laptop counts the open
-tabs (sessions). The clock and the window follow Bangkok time and weather. In a tall panel the
-sessions are listed under the room.
+tabs (sessions). The clock and the window follow the room's time zone and city weather (Bangkok by
+default). Tapping the Raspberry Pi on the shelf opens the settings: time zone, weather city, units,
+alerts, how long idle sessions stay, how many Claudes fit, subagents and calm mode. They are saved
+in `~/.claude/office-settings.json`. In a tall panel the sessions are listed under the room.
 
 It runs a small local server that only reads the transcripts in `~/.claude/projects`, so it costs
-no tokens while it runs. The page's only outside request is the Bangkok weather from Open-Meteo
-(add `?noweather` to turn it off). Only one server runs at a time, so the start command is always
+no tokens while it runs. The page's only outside requests are the weather from Open-Meteo and a
+city search when the user presses FIND in the settings (weather can be turned off there, or with
+`?noweather`). Only one server runs at a time, so the start command is always
 safe to run.
 
 ## Start or show
@@ -63,7 +66,8 @@ when the server stops; the side panel keeps its last picture.
 
 ## Files
 
-- `claude-office.py`: the local server (port 7788), `/state` gives the sessions as JSON.
+- `claude-office.py`: the local server (port 7788), `/state` gives the sessions as JSON, `/settings`
+  reads and saves the settings.
 - `tracker.py`: reads the transcripts (taken from the Claude Pet box so this skill stands alone).
 - `office-hook.py`: the optional Claude Code hook; `python install.py --hooks` adds it, `--uninstall-hooks`
   removes it. With it, permission prompts and finished turns show in the room at once.
