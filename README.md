@@ -82,6 +82,43 @@ Please install Claude Office for me from https://github.com/devtint/CLAUDE-OFFIC
 Claude may ask for your OK before running commands. The office only reads your local session
 files and never sends them anywhere.
 
+## Update from an older version
+
+Already using Claude Office? Paste this into Claude Code to update it:
+
+```text
+Please update my Claude Office skill to the newest version from
+https://github.com/devtint/CLAUDE-OFFICE
+
+1. Find where I installed it. It is usually ~/.claude/skills/claude-office
+   (on Windows: %USERPROFILE%\.claude\skills\claude-office). If it is not there, look for a
+   folder containing claude-office.py and ask me if you are not sure it is the right one.
+2. In that folder run "git status". If there are local changes, show them to me and ask before
+   doing anything that would discard them. Otherwise run "git pull".
+   If the folder is not a git clone, tell me and offer to replace it with a fresh clone.
+3. Tell me in a few lines what changed, from "git log --oneline -5" and README.md.
+4. Read install.py and office-hook.py, then ask me whether to add the optional office hooks.
+   They make the office show permission prompts and finished turns immediately, run only on
+   those events and cost no tokens. If I say yes, run install.py with --hooks using Python
+   (python3 on macOS and Linux, python on Windows). Tell me "install.py --uninstall-hooks"
+   removes them.
+5. If I use the desktop shortcuts, run install.py again (without --hooks) to refresh them.
+6. Restart the office: run open-office.pyw with --stop, wait a moment, then run it again
+   with --server.
+7. Check that http://127.0.0.1:7788/state answers with JSON. If you are in the Claude desktop
+   app, open http://127.0.0.1:7788 in the built-in browser panel.
+8. Tell me it is updated, that "start the office" and "stop the office" work as before, that
+   http://127.0.0.1:7788/?demo shows made-up sessions to try it, and that tapping the intercom
+   turns alert sounds on or off.
+```
+
+What changed since the open-plan office:
+
+- It is now one room. The old `/rooms` and `/simple` pages are gone.
+- The clock, sky and weather follow Bangkok. The page asks Open-Meteo for the Bangkok weather
+  every 10 minutes and sends nothing about you or your sessions; `?noweather` turns it off.
+- After adding the hooks, restart Claude Code (or start a new session) so it picks them up.
+
 ## Install
 
 Or do it yourself. Clone it into your Claude Code skills folder, so Claude can open it for you too:
