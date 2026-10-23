@@ -120,7 +120,8 @@ https://github.com/devtint/CLAUDE-OFFICE
    app, open http://127.0.0.1:7788 in the built-in browser panel.
 8. Tell me it is updated, that "start the office" and "stop the office" work as before, that
    http://127.0.0.1:7788/?demo shows made-up sessions to try it, and that tapping the Raspberry Pi
-   on the shelf opens the settings (time zone, weather city, units, the window view, alerts and more).
+   on the shelf opens the settings (time zone, weather city, units, the window view, the cat,
+   what to show in the room, sound, alerts and more).
 ```
 
 What changed since the open-plan office:
@@ -133,8 +134,13 @@ What changed since the open-plan office:
 - The portal now opens only when needed, and the cat opens it. The whiteboard is gone.
 - A plant by the window grows with your work, the cat plays with the Claudes, and there is optional
   ambient sound in the settings.
-- New in the settings: the cat's coat (orange tabby, tuxedo or calico) and seven views out of the window (city, mountain, ice mountain, shores, village,
-  desert, forest, or a random one each day), each with its own wall and matching touches in the room.
+- New in the settings: the cat's coat (orange tabby, tuxedo or calico), seven views out of the
+  window (city, mountain, ice mountain, shores, village, desert, forest, or a random one each day),
+  each with its own wall and matching touches in the room, and a switch for each optional thing in
+  the room (plant, tea cup, fish tank, cat, clock, calendar, Today board, mailbox, rug, decorations,
+  moth).
+- The Raspberry Pi blinks NEW when a newer version is on GitHub; tap it to copy the update prompt.
+- Calm mode turns on by itself when your computer is set to reduce motion.
 - After adding the hooks, restart Claude Code (or start a new session) so it picks them up.
 
 ## Install
@@ -258,7 +264,8 @@ by default) from [Open-Meteo](https://open-meteo.com) (no key, no account, nothi
 your sessions is sent), every 10 minutes, plus a city search when you press FIND in the settings.
 Turn the weather off in the settings, or add `?noweather` to the address.
 The server also asks GitHub once a day whether a newer version exists, sending only the commit id
-this copy is on. Turn that off with "Check for updates" in the settings.
+this copy is on, and keeps the answer in `~/.claude/office-update.json`. Turn that off with "Check
+for updates" in the settings.
 
 If something goes wrong, the last error is kept in `office-error.log` next to the scripts.
 
