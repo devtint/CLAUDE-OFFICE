@@ -92,8 +92,10 @@ DEFAULTS = {
     'helpers': True,       # show subagents as small Claudes
     'calm': False,         # fewer animations, for slower computers
     'view': 'city',        # what the window looks out on, with matching touches in the room
+    'wall': 'view',        # the wall: 'view' follows the view, or one view's wall
     'cat': 'orange',       # the cat's coat: orange tabby, tuxedo or calico
     'sound': False,        # ambient sound: rain, typing, purring
+    'volume': 100,         # percent, 10 to 200
     'updates': True,       # ask GitHub once a day whether a newer version exists
     'fps': 30,             # frames a second the room is drawn at: 60, 30, 20 or 15
     'rest': True,          # slow to 10 fps while no Claude is working
@@ -113,9 +115,11 @@ DEFAULTS = {
     'show_rug': True,
     'show_touches': True,
     'show_moth': True,
+    'show_season': True,   # holiday and season decorations
 }
 VIEWS = ('city', 'mountain', 'ice', 'shore', 'village', 'desert', 'forest', 'random')
 CHOICES = {'units': ('C', 'F'), 'idle': (5, 10, 30, 60), 'max': (2, 4, 6, 8), 'view': VIEWS, 'cat': ('orange', 'tuxedo', 'calico'),
+           'wall': ('view',) + VIEWS[:-1], 'volume': tuple(range(10, 201, 10)),
            'fps': (60, 30, 20, 15), 'brightness': tuple(range(30, 101, 10))}
 _settings = {'mtime': None, 'data': dict(DEFAULTS)}
 

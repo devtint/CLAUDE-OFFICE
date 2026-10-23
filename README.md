@@ -146,6 +146,9 @@ What changed since the open-plan office:
 - The room draws about three times faster in every view, pixel for pixel the same: still things (the
   wall, the scenery out of the window, the rug and the touches in the room) are drawn once and reused.
   The server checks old transcripts every 10 seconds instead of every second. The server also forgets sessions older than a day and a half, so it stays small.
+- Seasons and holidays: Halloween, Christmas, New Year and Valentine's Day decorations, and petals
+  or leaves outside the window in spring and autumn.
+- The wall can be picked separately from the view, and the ambient sound has a volume.
 - The room rests at 10 fps while no Claude is working, and is back at full speed the moment one is.
 - A frame rate setting, 30 fps by default, so the room uses less CPU, also on high refresh monitors.
 - Cards show the context tokens used, without a percentage, since transcripts do not record the window size.
@@ -210,6 +213,7 @@ Add these to the address to try things out:
 | `?hour=21` | Shows the sky at another time of day (in the room's time zone) |
 | `?weather=storm` | Shows a weather: `clear`, `cloudy`, `overcast`, `fog`, `rain`, `storm` or `snow` |
 | `?noweather` | Turns off the weather request (see below) |
+| `?date=10-31` | Shows the decorations of another day (month-day), see Seasons and holidays |
 
 Keys, for a spare monitor or a small panel:
 
@@ -233,7 +237,8 @@ Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes
 | City | Type a city and press FIND, then pick it. Sets the weather, time zone and label |
 | Units | Celsius or Fahrenheit |
 | View | What the window looks out on: City, Mountain, Ice Mountain, Shores, Village, Desert or Forest, or Random each day. Each one also changes a few things in the room (see below) |
-| Show in the room | A switch for each of: plant, tea cup, fish tank, cat, wall clock, calendar, Today board, mailbox, rug, view decorations and moth. Claudes skip what is hidden (no tea without the cup, no petting without the cat), and without the cat the portal opens by itself |
+| Wall | Matches the view by default, or pick any view's wall: city panels, mountain logs, ice blocks, shore planks, village plaster, desert adobe or forest boards. The glow on the wall follows the wall you pick |
+| Show in the room | A switch for each of: plant, tea cup, fish tank, cat, wall clock, calendar, Today board, mailbox, rug, view decorations, moth, and seasons and holidays. Claudes skip what is hidden (no tea without the cup, no petting without the cat), and without the cat the portal opens by itself |
 | Frame rate | 30 fps by default, or 60, 20 or 15. Lower uses less CPU (about a third less at 30 than 60, and half at 15 than 30), and it stays the same on 120 or 144 Hz monitors. Pixel art looks almost the same at 30 |
 | Slow to 10 fps while no Claude is working | On by default. After 20 quiet seconds (no Claude working, thinking or asking for you, nobody walking, the portal shut, no taps or keys) the room draws at 10 fps, using less than half the CPU. Anything happening brings your frame rate back at once. The room stays fully visible |
 | Brightness | 30% to 100%. Darkens only the office page (a page cannot change the screen's own brightness); on an OLED darker pixels also wear less |
@@ -248,6 +253,7 @@ Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes
 | Show subagents | Helpers as small Claudes, or hidden |
 | Check for updates | Once a day the office asks GitHub whether a newer version exists, sending only the commit id it is on. When there is one, the Raspberry Pi blinks NEW and the settings show what changed with a button to copy the update prompt. Turn it off here |
 | Ambient sound | Off by default. Rain when it rains in your city (and thunder in storms), soft key clicks while a Claude types, purring when the cat is petted, a meow when it opens the portal. Browsers only play sound after you tap the page once, and it pauses while the page is hidden |
+| Volume | 10% to 200% for the ambient sound (100% by default). The alert chime keeps its own level |
 | Calm mode | No meteors or moth, lighter rain, at most 20 frames a second, for slower computers. Turns on by itself when your computer is set to reduce motion |
 
 Each view has its own day and night, and the live weather still falls on it:
@@ -262,7 +268,23 @@ Each view has its own day and night, and the live weather still falls on it:
 | Desert | Dunes and cacti, far more stars at night | Adobe bricks, a sun hat, a patterned rug, two cacti |
 | Forest | Layered pines, birds by day, fireflies at night | Dark wooden boards with moss, ivy trailing from the window and shelf, a fern |
 
-Add `?view=shore` (or any view) to the address to preview one without saving it.
+Add `?view=shore` (or any view) to the address to preview one without saving it, and `?wall=forest`
+for a wall.
+
+### Seasons and holidays
+
+Decorations come by themselves with the date in the room's time zone, and go away after:
+
+| When | What |
+|---|---|
+| 15 October to 1 November | Halloween: a cobweb with a spider in the corner, bats asleep under the shelf, pumpkins by the plant that glow after dark, and a bat crossing the window at night |
+| 1 to 30 December | String lights along the top of the wall that twinkle, and a little Christmas tree with a star |
+| 31 December to 2 January | A HAPPY new year banner over the clock, and fireworks in the window after dark |
+| 13 to 15 February | A string of hearts along the wall |
+| Spring and autumn | Petals or leaves drifting past the window. Not in the tropics (Bangkok has no autumn), and swapped south of the equator |
+
+Turn them off with "Seasons and holidays" under Show in the room. They are drawn once and reused, so
+they cost next to nothing.
 
 They are saved in `~/.claude/office-settings.json`, so the desktop window, the side panel and the
 tracker all share them. RESET goes back to the defaults. The city search uses Open-Meteo's free
