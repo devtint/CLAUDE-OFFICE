@@ -7,7 +7,8 @@ description: Start, show or stop the Claude office, a pixel room inside the Clau
 
 A pixel room shown in the Claude desktop app's built-in browser panel, where every active Claude
 Code session is a little 3D Claude agent. Agents arrive through a portal when a session starts and
-leave through it when it ends. They use the two computers to write code (CODE) and run commands
+leave through it when it ends; the portal only appears then, opened by the office cat (orange tabby,
+tuxedo or calico, picked in the settings). They use the two computers to write code (CODE) and run commands
 (RUN), show FIX after an error and DONE when finished, read at the bookshelf, browse on the laptop,
 go to the intercom to ask the user when they need approval or have a question, and sleep on the
 desk when idle. In free time they feed the

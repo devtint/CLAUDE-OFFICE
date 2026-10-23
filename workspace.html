@@ -68,6 +68,7 @@
     <h3>ROOM</h3>
     <label>Leave after idle <select id="sIdle"><option value="5">5 min</option><option value="10">10 min</option><option value="30">30 min</option><option value="60">60 min</option></select></label>
     <label>Claudes at once <select id="sMax"><option>2</option><option>4</option><option>6</option><option>8</option></select></label>
+    <label>Cat <select id="sCat"><option value="orange">Orange tabby</option><option value="tuxedo">Tuxedo</option><option value="calico">Calico</option></select></label>
     <label class="check"><input type="checkbox" id="sHelpers"> Show subagents</label>
     <label class="check"><input type="checkbox" id="sCalm"> Calm mode (fewer animations)</label>
     <div class="foot"><span class="note" id="sNote"></span><button id="sReset">RESET</button></div>
@@ -218,8 +219,13 @@ function shortName(str, max) {
 
 const TILT = 0.4; // the camera looks a little down, so top faces show
 const LIGHT = [-0.3, 0.8, 0.5].map(v => v / Math.hypot(0.3, 0.8, 0.5));
-const MAT = {
-  cat:    { spark: C.white, lit: C.white, dark: C.blue, soft: true } // fur: sparse shading, not a checkerboard
+// Cat fur: sparse shading, not a checkerboard
+const FUR = {
+  white:  { spark: C.white, lit: C.white, dark: '#aeb9cf', soft: true },
+  orange: { spark: '#f7b866', lit: '#e8913a', dark: '#b0612a', soft: true },
+  stripe: { spark: '#c46c2e', lit: '#b25d26', dark: '#7c3c18', soft: true },
+  black:  { spark: '#62627c', lit: '#30303f', dark: '#1b1b25', soft: true },
+  ginger: { spark: '#f4ac62', lit: '#e08a3c', dark: '#a85c28', soft: true }
 };
 
 const angleDiff = (a, b) => ((a - b + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
@@ -345,7 +351,6 @@ const CUP_X = 104;
 const SHELF_SPOT = 226, LAPTOP_SPOT = 270; // stand beside the laptop so TABS stays visible
 const MAX_AGENTS = 8;
 const COMM = { x: 254, spot: 244 }; // intercom table on the floor by the drawers, and where the caller sits
-const BOARD = { x: 4, y: 98, w: 54, h: 40, spot: 31 }; // whiteboard on the wall left of the desk
 const MAILBOX_X = 300, MAIL_SPOT = 292, CALENDAR_SPOT = 205;
 const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -361,7 +366,7 @@ const clouds = [
 ];
 const runLines = makeLines(42, 64, 40, 0.15);
 
-const world = { frames: 0, piParty: 0, tapped: false, portalFlare: 0, sessions: 0, ready: true, today: null, mailFlag: 0 };
+const world = { portal: { open: 0, go: false, wait: 0, idle: 0, peek: 0 }, frames: 0, piParty: 0, tapped: false, portalFlare: 0, sessions: 0, ready: true, today: null, mailFlag: 0 };
 const steam = [];
 const pops = [];
 const drops = [];
@@ -372,7 +377,7 @@ const cable = makeRope(298, 58, 311, 85, 12, 40);
 
 // Settings, the same as DEFAULTS in tracker.py; loaded from /settings (see the Settings panel below)
 const DEFAULTS = { tz: 'Asia/Bangkok', label: 'BKK', city: 'Bangkok', lat: 13.75, lon: 100.5, weather: true, units: 'C',
-  clock24: true, alerts: false, idle: 10, max: 8, helpers: true, calm: false, view: 'city' };
+  clock24: true, alerts: false, idle: 10, max: 8, helpers: true, calm: false, view: 'city', cat: 'orange' };
 const cfg = Object.assign({}, DEFAULTS);
 
 function pop(str, x, y, color, life = 1.4) {
@@ -617,7 +622,8 @@ function updateTank(dt, t) {
 
 // ---------- The cat ----------
 
-const cat = { x: 200, y: 0, vy: 0, yaw: 0.7, action: 'sleep', timer: 8, target: 200, face: 1, moving: false };
+const cat = { x: 200, y: 0, vx: 0, vy: 0, base: FLOOR_Y, yaw: 0.7, action: 'sleep', step: '', timer: 8, target: 200, face: 1, moving: false, twitch: 0 };
+const CAT_DESK = 128, CAT_UP = PORTAL.x + 9, CAT_SEAT = PORTAL.x + 15; // the desk top, where it jumps up, where it sits
 
 function startCat(action, time) {
   cat.action = action;
@@ -626,40 +632,88 @@ function startCat(action, time) {
 }
 
 function petCat() {
+  if (cat.action === 'portal') { if (Math.random() < 0.05) pop('&', cat.x - 1, cat.base - 18, C.amber); return; }
   if (cat.action !== 'purr') startCat('purr', 4);
 }
 
 function startleCat() {
-  if (cat.y < 0) return;
+  if (cat.y < 0 || cat.action === 'portal') return;
   cat.vy = -90;
-  pop('!', cat.x - 1, 146, C.amber);
+  pop('!', cat.x - 1, cat.base - 22, C.amber);
   startCat('walk', 3);
+}
+
+// The portal only opens when someone is coming or going, and the cat is the one who opens it
+const portalWanted = () => world.portal.peek > 0 || agents.some(a => a.action === 'spawn' || a.action === 'leave' || a.action === 'ship');
+
+function updatePortal(dt) {
+  const P = world.portal, want = portalWanted();
+  P.peek = Math.max(0, P.peek - dt);
+  if (want) { P.idle = 0; P.wait += dt; if (P.wait > 12) P.go = true; } // in the end it opens without the cat
+  else { P.wait = 0; P.idle += dt; if (P.idle > 1.5) P.go = false; }
+  P.open = Math.max(0, Math.min(1, P.open + (P.go ? dt * 2 : -dt * 1.5)));
+}
+
+// Someone is coming or going: the cat runs over, jumps on the desk and paws the portal open,
+// then sits beside it until everyone is through and it has closed again
+function catPortal() {
+  const P = world.portal;
+  switch (cat.step) {
+    case 'run':
+      if (Math.abs(CAT_UP - cat.x) > 1) { cat.face = Math.sign(CAT_UP - cat.x); cat.x += cat.face * Math.min(Math.abs(CAT_UP - cat.x), 40 * STEP); cat.moving = true; }
+      else { cat.step = 'up'; cat.base = CAT_DESK; cat.y = FLOOR_Y - CAT_DESK; cat.vy = -160; cat.vx = (CAT_SEAT - cat.x) / 0.71; cat.face = -1; }
+      break;
+    case 'up': cat.step = 'tap'; cat.timer = 0.8; break; // landed on the desk
+    case 'tap':
+      cat.face = -1;
+      if (cat.timer <= 0) { P.go = true; P.idle = -2; world.portalFlare = 1; cat.step = 'guard'; pop('%', cat.x - 2, cat.base - 20, C.green); }
+      break;
+    case 'guard':
+      cat.face = -1;
+      if (portalWanted() && !P.go) { cat.step = 'tap'; cat.timer = 0.6; }
+      else if (!portalWanted() && P.open === 0) {
+        cat.step = 'down'; cat.base = FLOOR_Y; cat.y = CAT_DESK - FLOOR_Y; cat.vy = -50; cat.vx = (CAT_UP - cat.x) / 0.71; cat.face = 1;
+      }
+      break;
+    default: startCat('sit', rand(2, 4)); // back on the floor
+  }
 }
 
 function updateCat(dt, t) {
   if (cat.y !== 0 || cat.vy !== 0) {
-    cat.vy += GRAVITY * dt; cat.y += cat.vy * dt;
-    if (cat.vy > 0 && cat.y >= 0) { cat.y = 0; cat.vy = 0; }
+    cat.vy += GRAVITY * dt; cat.y += cat.vy * dt; cat.x += cat.vx * dt;
+    if (cat.vy > 0 && cat.y >= 0) { cat.y = 0; cat.vy = 0; cat.vx = 0; }
   }
+  const air = cat.y !== 0 || cat.vy !== 0;
   cat.timer -= dt;
   cat.moving = false;
-  const goal = cat.action === 'walk' ? cat.target : cat.action === 'watch' ? TANK.x + 16 : null;
-  if (goal !== null) {
-    const dx = goal - cat.x;
-    if (Math.abs(dx) > 1) { cat.face = Math.sign(dx); cat.x += cat.face * 12 * dt; cat.moving = true; }
-    else if (cat.action === 'walk') cat.timer = Math.min(cat.timer, 0.3);
+  cat.twitch = Math.max(0, cat.twitch - dt);
+  if (Math.random() < dt * 0.15) cat.twitch = 0.25; // an ear flicks now and then
+  if (!air && portalWanted() && cat.action !== 'portal') {
+    if (cat.action === 'sleep') pop('!', cat.x - 1, cat.base - 22, C.amber);
+    cat.action = 'portal'; cat.step = cat.base === CAT_DESK ? 'tap' : 'run'; cat.timer = 0.6;
   }
-  if (cat.action === 'sleep' && Math.random() < dt * 0.4) pop('Z', cat.x + 3, 150, C.white, 2.2);
-  if (cat.action === 'purr' && Math.random() < dt * 1.5) pop('&', cat.x + rand(-4, 2), 150, C.amber);
-  if (cat.timer <= 0) {
-    const r = Math.random();
-    if (r < 0.35) startCat('walk', 8);
-    else if (r < 0.55) startCat('sit', rand(4, 7));
-    else if (r < 0.8) startCat('sleep', rand(10, 18));
-    else if (r < 0.9) startCat('groom', rand(3, 5));
-    else startCat('watch', rand(6, 10)); // sits under the fish tank, staring
+  if (cat.action === 'portal') { if (!air) catPortal(); }
+  else {
+    const goal = cat.action === 'walk' ? cat.target : cat.action === 'watch' ? TANK.x + 16 : null;
+    if (goal !== null) {
+      const dx = goal - cat.x;
+      if (Math.abs(dx) > 1) { cat.face = Math.sign(dx); cat.x += cat.face * 12 * dt; cat.moving = true; }
+      else if (cat.action === 'walk') cat.timer = Math.min(cat.timer, 0.3);
+    }
+    if (cat.action === 'sleep' && Math.random() < dt * 0.4) pop('Z', cat.x + 3, cat.base - 18, C.white, 2.2);
+    if (cat.action === 'purr' && Math.random() < dt * 1.5) pop('&', cat.x + rand(-4, 2), cat.base - 18, C.amber);
+    if (cat.timer <= 0) {
+      const r = Math.random();
+      if (r < 0.35) startCat('walk', 8);
+      else if (r < 0.55) startCat('sit', rand(4, 7));
+      else if (r < 0.8) startCat('sleep', rand(10, 18));
+      else if (r < 0.9) startCat('groom', rand(3, 5));
+      else startCat('watch', rand(6, 10)); // sits under the fish tank, staring
+    }
   }
   const target = cat.moving ? cat.face * Math.PI / 2
+    : cat.action === 'portal' ? (cat.step === 'tap' ? -Math.PI / 2 : -0.7)
     : cat.action === 'watch' ? Math.PI : cat.action === 'sleep' ? cat.face * 0.8 : cat.face * 0.5;
   cat.yaw += angleDiff(target, cat.yaw) * Math.min(1, dt * 6);
 }
@@ -679,14 +733,12 @@ function modelMat(colour) {
 function spawnAgent(info) {
   const a = {
     id: info.id, info, helper: !!info.parent, mat: modelMat(info.colour), code: makeCode(hashText(info.id)),
-    x: PORTAL.x, y: 0, vx: 0, vy: 0, level: 'desk', seat: false, squash: 0, scale: 0.1,
+    x: PORTAL.x, y: 0, vx: 0, vy: 0, level: 'desk', seat: false, squash: 0, scale: 0,
     action: 'spawn', timer: Infinity, target: PORTAL.x, face: -1, hops: 0, happy: 0, yaw: 0, idleYaw: 0, spin: 0,
     activity: '', task: null, taskTime: 0, monitor: null, arrived: false, moving: false, sub: 0, after: null, buddy: null,
     pushes: info.pushes || 0, ship: false, tired: false, napping: false, mate: null
   };
   agents.push(a);
-  world.portalFlare = 0.8;
-  pop(shortName(info.project || info.name, 8) || 'CLAUDE', PORTAL.x - 12, 86, C.green, 2);
   return a;
 }
 
@@ -752,7 +804,6 @@ const KIND = tool =>
   /^(Edit|Write|NotebookEdit|MultiEdit)$/.test(tool) ? 'code'
   : /^(Bash|PowerShell)$/.test(tool) ? 'run'
   : /^(Read|Grep|Glob|Skill)$/.test(tool) ? 'read'
-  : /^(TodoWrite|TaskCreate|TaskUpdate|TaskList|TaskGet)$/.test(tool) ? 'plan'
   : /^(Agent|Task)$/.test(tool) ? 'summon'
   : /mail|outlook/i.test(tool) ? 'mail'
   : /calendar/i.test(tool) ? 'calendar'
@@ -813,7 +864,6 @@ function plan(a) {
     case 'read':  return startAction(a, 'read');
     case 'web':   return startAction(a, 'browse');
     case 'summon': return startAction(a, 'summon');
-    case 'plan':  return startAction(a, 'plan');
     case 'mail':  return startAction(a, 'mail');
     case 'calendar': return startAction(a, 'calendar');
     case 'wait':  return startAction(a, 'wait');
@@ -887,7 +937,6 @@ function startAction(a, name) {
     case 'read':    a.target = freeSpot(a, SHELF_SPOT + rand(-3, 3)); a.timer = Infinity; break;
     case 'browse':  a.target = freeSpot(a, LAPTOP_SPOT); a.timer = Infinity; break;
     case 'summon':  a.target = freeSpot(a, PORTAL.x - 18); a.timer = Infinity; break; // calls its helper in through the portal
-    case 'plan':    setLevel(a, 'floor'); a.target = freeSpot(a, BOARD.spot + rand(-5, 5)); a.timer = Infinity; break; // writes on the whiteboard
     case 'mail':    setLevel(a, 'floor'); a.target = freeSpot(a, MAIL_SPOT); a.timer = Infinity; break;
     case 'calendar': a.target = freeSpot(a, CALENDAR_SPOT); a.timer = Infinity; break;
     case 'ship':    a.target = PORTAL.x; a.timer = Infinity; break; // carries a pushed commit to the portal
@@ -932,12 +981,14 @@ function updateAgent(a, dt, t) {
 
   switch (a.action) {
     case 'spawn':
+      if (world.portal.open < 1) break; // waits on the other side until the cat opens the portal
+      if (a.scale === 0) { world.portalFlare = 0.8; pop(shortName(a.info.project || a.info.name, 8) || 'CLAUDE', PORTAL.x - 12, 86, C.green, 2); }
       a.scale = Math.min(scale, a.scale + dt * 1.6);
       if (a.scale >= scale && a.sub === 0) { a.sub = 1; jump(a, -60, -25); a.timer = 0.6; }
       break;
     case 'leave':
       if (a.level === 'floor') { setLevel(a, 'desk'); break; }
-      if (walkTo(a, PORTAL.x, 18, dt)) {
+      if (walkTo(a, PORTAL.x, 18, dt) && world.portal.open >= 1) {
         a.arrived = true;
         a.scale -= dt * 1.8;
         world.portalFlare = 0.5;
@@ -968,7 +1019,7 @@ function updateAgent(a, dt, t) {
     case 'think':
       a.arrived = walkTo(a, a.target, 8, dt);
       break;
-    case 'plan': case 'mail':
+    case 'mail':
       if (a.level !== 'floor') break;
       a.arrived = walkTo(a, a.target, 22, dt);
       if (a.arrived && a.action === 'mail') world.mailFlag = 3;
@@ -977,7 +1028,7 @@ function updateAgent(a, dt, t) {
       a.arrived = walkTo(a, a.target, 18, dt);
       break;
     case 'ship':
-      if (walkTo(a, PORTAL.x, 24, dt)) {
+      if (walkTo(a, PORTAL.x, 24, dt) && world.portal.open >= 1) {
         a.ship = false;
         world.portalFlare = 1;
         pop('SENT', PORTAL.x - 7, 88, C.green);
@@ -1013,6 +1064,7 @@ function updateAgent(a, dt, t) {
       break;
     case 'cat': {
       if (a.level !== 'floor') break;
+      if (cat.action === 'portal') { a.timer = Math.min(a.timer, 1); break; } // the cat has a job to do
       const side = a.x < cat.x ? -1 : 1;
       if (!walkTo(a, cat.x + side * 13, 16, dt)) break;
       a.arrived = true;
@@ -1075,7 +1127,7 @@ function yawTarget(a, t) {
     case 'read': case 'book': return a.arrived ? 2.4 : walking; // half turned to the shelf, face still showing
     case 'browse': return a.arrived ? -1.3 : walking; // turned toward the laptop
     case 'summon': return a.arrived ? 1.2 : walking;  // facing the portal
-    case 'plan': case 'calendar': case 'ship': return a.arrived ? Math.PI : walking;
+    case 'calendar': case 'ship': return a.arrived ? Math.PI : walking;
     case 'mail':  return a.arrived ? 1.3 : walking;
     case 'chat':  return a.arrived ? a.face * 1.2 : walking;
     case 'busy':  return 0.4;
@@ -1144,7 +1196,7 @@ const DEMO = [
   { id: 'demo-a1', parent: 'demo-a', name: 'Explore', project: 'Agent Room', colour: '#D97757', desc: 'Find the API routes' }
 ];
 const DEMO_TOOLS = ['Edit', 'Edit', 'Write', 'Bash', 'Bash', 'Read', 'Grep', 'WebSearch', 'TodoWrite', 'mcp__gmail__send', 'mcp__calendar__create_event'];
-const DEMO_TODOS = ['Read the tracker', 'Add the whiteboard', 'Hook up alerts', 'Write the tests', 'Update the docs'];
+const DEMO_TODOS = ['Read the tracker', 'Add the window views', 'Hook up alerts', 'Write the tests', 'Update the docs'];
 const DEMO_WORDS = { working: 'Working', thinking: 'Thinking', waiting: 'May need you', error: 'Fixing an error', done: 'Done', off: 'Idle' };
 
 // Made-up sessions that change every 10 seconds, and sometimes come and go
@@ -1235,6 +1287,7 @@ function fillPanel() {
   $('sHelpers').checked = cfg.helpers;
   $('sCalm').checked = cfg.calm;
   $('sView').value = cfg.view;
+  $('sCat').value = cfg.cat;
   $('sResults').replaceChildren();
   $('sNote').textContent = params.has('noweather') ? '?noweather is on' : '';
 }
@@ -1291,6 +1344,7 @@ function bindSettings() {
   on('sHelpers', 'change', e => { cfg.helpers = e.checked; });
   on('sCalm', 'change', e => { cfg.calm = e.checked; });
   on('sView', 'change', e => { cfg.view = e.value; });
+  on('sCat', 'change', e => { cfg.cat = e.value; });
   $('sFind').addEventListener('click', findCity);
   $('sCity').addEventListener('keydown', e => { if (e.key === 'Enter') findCity(); });
   $('sReset').addEventListener('click', () => { Object.assign(cfg, DEFAULTS); fillPanel(); fetchWeather(); saveSettings(); });
@@ -1388,7 +1442,8 @@ function drawRoom() {
 
 function drawLights(t, s) {
   glow(wallLight(), 172, 100, 78, 36);                                                   // monitor glow
-  glow(world.portalFlare > 0 ? C.green : wallLight(), PORTAL.x, PORTAL.y, 26, 26, 0.35); // portal glow
+  const pr = Math.round(26 * portalSize());
+  if (pr > 3) glow(world.portalFlare > 0 ? C.green : wallLight(), PORTAL.x, PORTAL.y, pr, pr, 0.35); // portal glow
   if (lightning()) glow(C.blue, 66, 110, 80, 60, 0.6);
   if (callQueue().some(a => a.arrived) && Math.floor(t * 4) % 2) glow(C.amber, COMM.x + 21, 140, 14, 10, 0); // intercom beacon
   // Sunlight or moonlight on the floor, dimmer at twilight, under clouds or a thin moon, gone in rain
@@ -1924,11 +1979,15 @@ function drawCable() {
   for (let i = 0; i < p.length - 1; i++) line(C.navy, p[i].x, p[i].y, p[i + 1].x, p[i + 1].y);
 }
 
-// The portal swirls on the wall; agents step out of it and walk back into it
+// The portal swirls on the wall while it is open; agents step out of it and walk back into it
+const portalSize = () => 1 - (1 - world.portal.open) ** 3;
+
 function drawPortal(t) {
-  const { x, y, rx, ry } = PORTAL, flare = world.portalFlare > 0;
-  for (let dy = -ry; dy <= ry; dy++)
-    for (let dx = -rx; dx <= rx; dx++) {
+  const k = portalSize();
+  if (k <= 0) return;
+  const { x, y } = PORTAL, rx = PORTAL.rx * k, ry = PORTAL.ry * k, flare = world.portalFlare > 0;
+  for (let dy = -Math.ceil(ry); dy <= ry; dy++)
+    for (let dx = -Math.ceil(rx); dx <= rx; dx++) {
       const r = Math.hypot(dx / rx, dy / ry);
       if (r > 1) continue;
       const a = Math.atan2(dy / ry, dx / rx), swirl = Math.sin(a * 3 + r * 9 - t * (flare ? 9 : 4));
@@ -1938,8 +1997,9 @@ function drawPortal(t) {
       else c = swirl > 0.35 ? C.green : swirl > -0.2 ? C.navy : C.night;
       px(c, x + dx, y + dy);
     }
-  rect(C.navy, x - 13, 125, 26, 3);
-  rect(C.blue, x - 13, 125, 26, 1);
+  const w = Math.round(26 * k);
+  rect(C.navy, x - w / 2, 125, w, 3);
+  rect(C.blue, x - w / 2, 125, w, 1);
 }
 
 // ---------- Desk and gear ----------
@@ -2184,27 +2244,66 @@ function drawFish(f, t) {
 
 // The office cat: a calico built from 3D boxes in fine pixels, with pointed ears, whiskers, a nose
 // and a tail that curls up when it walks and wraps around it when it sleeps
-const PATCH = { spark: C.amber, lit: C.oak, dark: C.wood };
+// Coats for the settings: where each colour goes, by body part, box face and position on it
+const COATS = {
+  orange: { // orange tabby with a white chin, chest and paws, and a blue collar
+    eye: '#9be05a', collar: C.blue, legs: 'orange', paws: 'white', ears: ['orange', 'orange'], tail: ['orange', 'stripe', 'stripe'],
+    mark(part, face, u, v) {
+      if (part === 'head') {
+        if (face === 'front') return v < 0.45 && u > 0.15 && u < 0.85 ? 'white' : 'orange';
+        if (face === 'top') return (u * 4 + 0.1) % 1 < 0.28 ? 'stripe' : 'orange'; // the M on its forehead
+        return v > 0.4 && (v * 4) % 1 < 0.3 ? 'stripe' : 'orange';
+      }
+      if (face === 'front') return u > 0.3 && u < 0.7 && v > 0.35 ? 'white' : 'orange'; // bib
+      if (face === 'top') return (v * 6) % 1 < 0.33 ? 'stripe' : 'orange';
+      return v < 0.2 ? 'white' : v > 0.35 && (u * 6) % 1 < 0.3 ? 'stripe' : 'orange';
+    }
+  },
+  tuxedo: { // black with a white bib, blaze, muzzle and socks, and a red collar
+    eye: '#f2c43a', collar: '#d0504a', legs: 'black', paws: 'white', ears: ['black', 'black'], tail: ['black', 'black', 'black'],
+    mark(part, face, u, v) {
+      if (part === 'head') return face === 'front' && ((v < 0.5 && u > 0.18 && u < 0.82) || (u > 0.42 && u < 0.58)) ? 'white' : 'black';
+      if (face === 'front') return u > 0.28 && u < 0.72 && v > 0.2 ? 'white' : 'black';
+      return face !== 'top' && v < 0.22 ? 'white' : 'black';
+    }
+  },
+  calico: { // white with ginger and black patches, a split face, and a pink collar
+    eye: '#f2c43a', collar: '#e07aa8', legs: 'white', paws: 'white', ears: ['ginger', 'black'], tail: ['ginger', 'ginger', 'black'],
+    mark(part, face, u, v) {
+      if (part === 'head') {
+        if (face === 'front') return v < 0.5 && u > 0.15 && u < 0.85 ? 'white' : u < 0.5 ? 'ginger' : 'black';
+        if (face === 'top') return u < 0.5 ? 'ginger' : 'black';
+        return face === 'left' ? 'ginger' : 'black';
+      }
+      if (face === 'front') return 'white';
+      const k = { top: 0, left: 1.7, right: 3.1, back: 5.3 }[face];
+      const f = Math.sin(u * 3.1 + k) * Math.sin(v * 2.6 + k * 2);
+      return f > 0.3 ? 'ginger' : f < -0.35 ? 'black' : 'white';
+    }
+  }
+};
+const coat = () => COATS[cfg.cat] || COATS.orange;
 
 function drawCat(t) {
-  const o = { x: cat.x, y: FLOOR_Y + cat.y }, yaw = cat.yaw;
+  const c = coat(), o = { x: cat.x, y: cat.base + cat.y }, yaw = cat.yaw;
   const sleeping = cat.action === 'sleep';
   const sitting = !cat.moving && !sleeping;
+  const pawing = cat.action === 'portal' && cat.step === 'tap';
   const breathe = sleeping || cat.action === 'purr' ? (Math.sin(t * 3) + 1) * 0.25 : 0;
-  rect(C.wood, Math.round(cat.x) - 7, FLOOR_Y, 14, 1);
-
-  const patches = (face, u, v, fx, fy, b) =>
-    (face === 'top' && u < 0.55 && v > 0.35) || ((face === 'left' || face === 'right') && u > 0.5 && v > 0.45)
-      ? shade(PATCH, b, fx, fy) : null;
+  if (cat.y > -3) rect(C.wood, Math.round(cat.x) - 7, cat.base, 14, 1);
+  const fur = part => (face, u, v, fx, fy, b) => shade(FUR[c.mark(part, face, u, v)], b, fx, fy);
   const parts = [];
 
   if (!sleeping) [[-2, -4], [2, -4], [-2, 4], [2, 4]].forEach(([lx, lz], i) => {
     if (sitting && lz < 0) return; // back legs tucked under when sitting
     const lift = cat.moving && (i + Math.floor(t * 10)) % 2 ? 1 : 0;
+    const up = pawing && lz > 0 && lx > 0; // the paw reaching out to the portal
     parts.push({ z: depth([lx, 0, lz], yaw), draw: () => {
-      const top = toScreen(o, rotY([lx, 3, lz], yaw)), foot = toScreen(o, rotY([lx, lift, lz], yaw));
-      line(C.white, ...top, ...foot, R);
-      frect(C.blue, Math.round(foot[0] * R), Math.round(foot[1] * R) + 1, 2, 1); // paw shadow
+      const top = toScreen(o, rotY([lx, 3, lz], yaw));
+      const foot = toScreen(o, rotY(up ? [lx, 5 + Math.sin(t * 14), lz + 3] : [lx, lift, lz], yaw));
+      line(FUR[c.legs].lit, ...top, ...foot, R);
+      frect(FUR[c.paws].lit, Math.round(foot[0] * R), Math.round(foot[1] * R), 2, 1);
+      if (!up) frect(C.night, Math.round(foot[0] * R), Math.round(foot[1] * R) + 1, 2, 1); // paw shadow
     } });
   });
 
@@ -2212,46 +2311,52 @@ function drawCat(t) {
   const [bodyPos, bodySize] = sleeping ? [[0, 0, 0], [8, 4 + breathe, 10]] : sitting ? [[0, 2, -1], [6, 6 + breathe, 7]] : [[0, 2, 0], [6, 5, 12]];
   const headPos = sleeping ? [0, 0, 5] : sitting ? [0, 7 - groom, 3] : [0, 4, 7.5];
   const hy = headPos[1], hz = headPos[2] + 2.5;
-  parts.push({ z: 0, draw: () => box(o, yaw, bodyPos, bodySize, MAT.cat, patches) });
+  parts.push({ z: 0, draw: () => box(o, yaw, bodyPos, bodySize, FUR.white, fur('body')) });
 
   parts.push({ z: depth(headPos, yaw) + 1, draw: () => {
-    box(o, yaw, headPos, [6, 5, 5], MAT.cat, (face, u, v, fx, fy, b) => face === 'top' && u > 0.5 ? shade(PATCH, b, fx, fy) : null);
-    for (const ex of [-1.8, 1.8]) catEar(toScreen(o, rotY([ex, hy + 5, headPos[2] + 0.5], yaw)), ex > 0);
+    box(o, yaw, headPos, [6, 5, 5], FUR.white, fur('head'));
+    [-1.8, 1.8].forEach((ex, i) => catEar(toScreen(o, rotY([ex, hy + 5 + (i && cat.twitch > 0 ? 0.5 : 0), headPos[2] + 0.5], yaw)), ex > 0, FUR[c.ears[i]].lit));
     if (rotY([0, 0, 1], yaw)[2] < 0.3) return; // face turned away
+    const blink = sleeping || (t % 4.3) < 0.15;
     for (const ex of [-1.3, 1.3]) {
       const [x, y] = toScreen(o, rotY([ex, hy + 3.2, hz], yaw));
-      if (sleeping) frect(C.blue, Math.round(x * R) - 1, Math.round(y * R) + 1, 2, 1);
-      else { frect(C.green, Math.round(x * R), Math.round(y * R), 1, 2); }
+      if (blink) frect(C.night, Math.round(x * R) - 1, Math.round(y * R) + 1, 2, 1);
+      else { frect(c.eye, Math.round(x * R), Math.round(y * R), 1, 2); frect(C.night, Math.round(x * R), Math.round(y * R) + 1); }
     }
     const [nx, ny] = toScreen(o, rotY([0, hy + 2.2, hz], yaw));
-    frect(C.amber, Math.round(nx * R), Math.round(ny * R));
-    for (const side of [-1, 1]) for (const dy of [0.3, -0.4]) {
-      const a = toScreen(o, rotY([side * 1.4, hy + 1.8, hz], yaw)), b = toScreen(o, rotY([side * 4.2, hy + 1.8 + dy, hz + 0.5], yaw));
-      line(C.white, ...a, ...b);
+    frect('#f09aa6', Math.round(nx * R), Math.round(ny * R));
+    for (const side of [-1, 1]) { // one whisker a side
+      const a = toScreen(o, rotY([side * 1.6, hy + 1.8, hz], yaw)), b = toScreen(o, rotY([side * 3.8, hy + 1.6, hz + 0.5], yaw));
+      line('#d8dde8', ...a, ...b);
+    }
+    if (!sleeping) { // collar with a little bell
+      line(c.collar, ...toScreen(o, rotY([-2.4, hy + 0.3, hz], yaw)), ...toScreen(o, rotY([2.4, hy + 0.3, hz], yaw)));
+      const [bx, by] = toScreen(o, rotY([0, hy, hz + 0.3], yaw));
+      frect(C.amber, Math.round(bx * R), Math.round(by * R) + 1);
     }
   } });
 
-  // tail: three segments with an oak tip
+  // tail: three segments, coloured by the coat
   const back = sleeping ? -5 : sitting ? -4.5 : -6, ty = sleeping ? 1.5 : 4.5;
   parts.push({ z: depth([0, 0, back], yaw) - (sleeping ? 0 : 1), draw: () => {
-    const swish = Math.sin(t * (cat.action === 'purr' ? 6 : 2));
+    const swish = Math.sin(t * (cat.action === 'purr' ? 6 : cat.action === 'portal' ? 4 : 2));
     const pts = sleeping
       ? [[0, ty, back], [3, ty, back - 1], [5, ty, 0], [4, ty, 3]]
       : [[0, ty, back], [swish, ty + 2.5, back - 1.5], [swish * 2.5, ty + 5, back - 2], [swish * 3.5 + 1, ty + 6.5, back - 1.5]];
     const sp = pts.map(p => toScreen(o, rotY(p, yaw)));
-    for (let i = 1; i < sp.length; i++) line(i === sp.length - 1 ? C.oak : C.white, ...sp[i - 1], ...sp[i], R);
+    for (let i = 1; i < sp.length; i++) line(FUR[c.tail[i - 1]].lit, ...sp[i - 1], ...sp[i], R);
   } });
 
   parts.sort((p, q) => p.z - q.z).forEach(p => p.draw());
 }
 
-// A pointed ear in fine pixels, leaning outward: white outside, oak inside
-function catEar([x, y], right) {
+// A pointed ear in fine pixels, leaning outward, pink inside
+function catEar([x, y], right, color) {
   const fx = Math.round(x * R), fy = Math.round(y * R), s = right ? 1 : -1;
-  frect(C.white, fx - 1, fy - 1, 3, 1);
-  frect(C.oak, fx, fy - 1);
-  frect(C.white, Math.min(fx, fx + s), fy - 2, 2, 1);
-  frect(C.white, fx + s, fy - 3);
+  frect(color, fx - 1, fy - 1, 3, 1);
+  frect('#f09aa6', fx, fy - 1);
+  frect(color, Math.min(fx, fx + s), fy - 2, 2, 1);
+  frect(color, fx + s, fy - 3);
 }
 
 // Claude agents: little 3D blocks in their model's colour, with an antenna
@@ -2314,7 +2419,6 @@ function drawAgent(a, t) {
     if (a.action === 'wait' && side === near) ay = onCall(a) ? 8 : 6 + (Math.floor(t * 3) % 2) * 3;
     if (a.action === 'dance' && (side > 0) === !!beat) ay = 9;
     if (a.action === 'stretch') ay = 10;
-    if (a.action === 'plan' && a.arrived && side === near) { ay = 8 + (Math.floor(t * 6) % 2) * 2; az = 2; } // writing
     if (a.action === 'mail' && a.arrived && side === near) ay = 6;
     if (a.ship) ay = 9; // both arms up, holding the package
     if (typing) { ay = 4 + ((Math.floor(t * 10) + (side > 0 ? 1 : 0)) % 2) * 2; az = 3; }
@@ -2348,40 +2452,6 @@ function drawAgent(a, t) {
 }
 
 // Sessions with a task list, the most recently updated first
-const planners = () => agents.filter(a => a.info.todos && a.info.todos.length)
-  .sort((p, q) => (p.info.todo_age ?? 1e9) - (q.info.todo_age ?? 1e9));
-
-// The whiteboard: the task list of the session that planned most recently (cycles if several)
-function drawBoard(t) {
-  const { x, y, w, h } = BOARD;
-  rect(C.oak, x - 1, y - 1, w + 2, h + 2);
-  rect(C.white, x, y, w, h);
-  rect(C.oak, x + 6, y + h + 1, w - 12, 1);
-  px(C.amber, x + 9, y + h); px(C.blue, x + 12, y + h); px(C.green, x + 15, y + h); // markers
-  const boards = planners();
-  if (!boards.length) { // nothing planned: a doodle
-    text(C.blue, 'PLAN', x + 19, y + 12);
-    rect(C.amber, x + 23, y + 22, 8, 6); px(C.night, x + 25, y + 24); px(C.night, x + 28, y + 24);
-    return;
-  }
-  const a = boards[Math.floor(t / 8) % boards.length], todos = a.info.todos;
-  const done = todos.filter(i => i.status === 'completed').length;
-  rect(a.mat.lit, x, y, w, 1);
-  text(C.night, shortName(a.info.project || a.info.name, 7), x + 2, y + 2);
-  const count = done + '/' + todos.length;
-  text(C.amber, count, x + w - 1 - count.length * 4, y + 2);
-  rect(C.blue, x + 2, y + 8, w - 4, 1);
-  rect(C.green, x + 2, y + 8, Math.round((w - 4) * done / todos.length), 1);
-  const now = todos.findIndex(i => i.status === 'in_progress');
-  const from = Math.max(0, Math.min(todos.length - 5, (now < 0 ? done : now) - 1));
-  todos.slice(from, from + 5).forEach((item, r) => {
-    const yy = y + 11 + r * 6, state = item.status;
-    if (state === 'completed') text(C.green, '*', x + 2, yy);
-    else if (state === 'in_progress') { if (Math.floor(t * 2) % 2) text(C.amber, '>', x + 2, yy); }
-    else { rect(C.navy, x + 2, yy + 1, 3, 3); rect(C.white, x + 3, yy + 2, 1, 1); }
-    text(state === 'completed' ? C.blue : state === 'in_progress' ? C.night : C.navy, pixelText(item.text, 11), x + 7, yy);
-  });
-}
 
 // Wall calendar with the room's date
 function drawCalendar() {
@@ -2477,6 +2547,7 @@ function update(dt, t) {
   updatePops(dt);
   updateTank(dt, t);
   updateCat(dt, t);
+  updatePortal(dt);
   for (const a of agents) updateAgent(a, dt, t);
   for (let i = agents.length - 1; i >= 0; i--) if (agents[i].gone) { release(agents[i]); agents.splice(i, 1); }
   updateRope(cable, dt);
@@ -2497,7 +2568,6 @@ function draw(t) {
   drawLights(t, sk);
   drawRug();
   drawWindow(t, sk);
-  drawBoard(t);
   drawClock();
   drawCalendar();
   drawStats();
@@ -2505,17 +2575,17 @@ function draw(t) {
   drawTouches(t, sk);
   drawPortal(t);
   drawDesk();
-  if (!cfg.calm) drawMoth(t);
+  if (!cfg.calm && world.portal.open > 0.5) drawMoth(t);
   monitors.forEach(m => drawMonitor(m, t));
   drawLaptop(t);
   drawKeyboards(t);
   drawTank(t);
   drawCup();
-  for (const a of agents) if (a.level === 'desk') drawAgent(a, t);
+  for (const a of agents) if (a.level === 'desk' && a.scale > 0.05) drawAgent(a, t);
   drawComm(t);
   drawMailbox();
   drawCat(t);
-  for (const a of agents) if (a.level === 'floor') drawAgent(a, t);
+  for (const a of agents) if (a.level === 'floor' && a.scale > 0.05) drawAgent(a, t);
   drawPops();
   ctx.restore();
 }
@@ -2538,7 +2608,7 @@ function scenePoint(e) {
 }
 
 function agentAt(x, y) {
-  return agents.find(a => Math.abs(x - a.x) < 10 && y > bottomOf(a) - 18 && y < bottomOf(a) + 6);
+  return agents.find(a => a.scale > 0.05 && Math.abs(x - a.x) < 10 && y > bottomOf(a) - 18 && y < bottomOf(a) + 6);
 }
 
 function showCard(a, e) {
@@ -2580,13 +2650,11 @@ canvas.addEventListener('pointerdown', e => {
     const caller = callQueue()[0];
     if (caller) showCard(caller, e);
   }
-  else if (hit(BOARD.x, BOARD.y, BOARD.x + BOARD.w, BOARD.y + BOARD.h)) {
-    const boards = planners();
-    if (boards.length) showCard(boards[Math.floor(now / 8) % boards.length], e);
-  }
-  else if (Math.abs(x - cat.x) < 9 && y > 152 && y < 171) { if (cat.action === 'sleep') pop('!', cat.x - 1, 146, C.amber); petCat(); }
+  else if (Math.abs(x - cat.x) < 9 && y > cat.base - 16 && y < cat.base + 3) { if (cat.action === 'sleep') pop('!', cat.x - 1, cat.base - 22, C.amber); petCat(); }
   else if (hit(TANK.x - 1, TANK.y, TANK.x + TANK.w, TANK.y + TANK.h)) { feedFish(); tapTank(x); }
-  else if (hit(PORTAL.x - PORTAL.rx, PORTAL.y - PORTAL.ry, PORTAL.x + PORTAL.rx, PORTAL.y + PORTAL.ry)) world.portalFlare = 1;
+  else if (hit(PORTAL.x - PORTAL.rx, PORTAL.y - PORTAL.ry, PORTAL.x + PORTAL.rx, PORTAL.y + PORTAL.ry)) {
+    if (world.portal.open > 0) world.portalFlare = 1; else world.portal.peek = 9; // asks the cat to open it
+  }
   else if (hit(138, 26, 188, 56)) { cfg.clock24 = !cfg.clock24; saveSettings(); }
   else if (hit(CUP_X - 2, 110, CUP_X + 13, 128)) puffSteam(25, 12);
   else if (hit(278, 52, 300, 62)) { world.piParty = 0.6; openSettings(); } // the Pi runs the room: its settings

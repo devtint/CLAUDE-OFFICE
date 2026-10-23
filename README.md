@@ -2,7 +2,7 @@
 
 A pixel room where every active [Claude Code](https://claude.com/claude-code) session is a little
 3D Claude agent. Agents come in through a portal when a session starts and leave through it when the
-session ends. They take one of the two computers to write code or run commands, read at the
+session ends. The portal only appears when someone is coming or going, and the office cat opens it. They take one of the two computers to write code or run commands, read at the
 bookshelf, browse on the laptop, wait with "!" when they need you, and spend their free time with
 the office cat, the fish tank, a cup of tea and the view.
 
@@ -31,9 +31,12 @@ Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packag
 - **The rest of the room:** reading files sends an agent to the bookshelf, web tools to the
   laptop and thinking shows `...`. Idle sessions sleep on the edge of the desk.
 - **The laptop** counts the open tabs (sessions), with a dot for what each one is doing.
-- **The whiteboard** shows the task list of the session that planned most recently (from
-  `TodoWrite` or the task tools), with checks, the current item and a progress bar; the Claude
-  writes on it while it plans.
+- **The portal** is closed until it is needed. When a Claude is about to arrive, leave or send a
+  pushed commit, the cat runs over, jumps on the desk and paws the portal open, waits beside it
+  until everyone is through, then hops down. Tap the empty spot on the wall to ask the cat to open it.
+- **The cat** is an orange tabby by default (tuxedo and calico in the settings), with stripes, a
+  collar and bell, blinking eyes and twitching ears. It naps, grooms, watches the fish and purrs
+  when petted.
 - **Tests, commits and pushes:** a computer's light turns green when its session's tests pass and
   blinks amber when they fail, and the Claude cheers or winces. A push sends the Claude to the
   portal with a parcel ("SENT"). The CODE screen shows the file and the lines changed (+12 -3).
@@ -120,7 +123,8 @@ What changed since the open-plan office:
   another time zone and city. The page asks Open-Meteo for that city's weather every 10 minutes and
   sends nothing about you or your sessions; it can be turned off in the settings or with `?noweather`.
 - Alert sounds moved from the intercom to the settings.
-- New in the settings: seven views out of the window (city, mountain, ice mountain, shores, village,
+- The portal now opens only when needed, and the cat opens it. The whiteboard is gone.
+- New in the settings: the cat's coat (orange tabby, tuxedo or calico) and seven views out of the window (city, mountain, ice mountain, shores, village,
   desert, forest, or a random one each day), each with its own wall and matching touches in the room.
 - After adding the hooks, restart Claude Code (or start a new session) so it picks them up.
 
@@ -200,6 +204,7 @@ Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes
 | Alerts | A soft chime and a desktop notification when a Claude needs you |
 | Leave after idle | How long a quiet session stays in the room: 5, 10, 30 or 60 minutes |
 | Claudes at once | 2, 4, 6 or 8 |
+| Cat | Orange tabby, Tuxedo or Calico |
 | Show subagents | Helpers as small Claudes, or hidden |
 | Calm mode | No meteors or moth, lighter rain, half the frame rate, for slower computers |
 
