@@ -143,8 +143,9 @@ What changed since the open-plan office:
 - A SCREEN section in the settings: brightness, pixel shift against OLED burn-in, keep the screen
   awake, and full screen (also on `F`, a double-click, and optionally the desktop shortcut). Keys
   `S`, `M`, `[` and `]` open the settings, switch the sound and change the brightness.
-- The room draws about three times faster, pixel for pixel the same: still things are drawn once and
-  reused. The server also forgets sessions older than a day and a half, so it stays small.
+- The room draws about three times faster in every view, pixel for pixel the same: still things (the
+  wall, the scenery out of the window, the rug and the touches in the room) are drawn once and reused.
+  The server checks old transcripts every 10 seconds instead of every second. The server also forgets sessions older than a day and a half, so it stays small.
 - A frame rate setting, 30 fps by default, so the room uses less CPU, also on high refresh monitors.
 - Cards show the context tokens used, without a percentage, since transcripts do not record the window size.
 - After adding the hooks, restart Claude Code (or start a new session) so it picks them up.
@@ -267,8 +268,9 @@ geocoding and runs only when you press FIND.
 
 ## How it works
 
-- `tracker.py` reads the session transcripts once a second (only those changed in the last 36 hours)
-  and works out each session's model, state, current tool, recent steps, task list, tests, commits and
+- `tracker.py` reads the session transcripts once a second (only those changed in the last 36 hours;
+  the older ones are only listed again every 10 seconds, so months of old transcripts cost almost
+  nothing) and works out each session's model, state, current tool, recent steps, task list, tests, commits and
   pushes. A session stays in the room while its transcript changed in the last 10 minutes (see
   Settings).
 - `office-hook.py` is the optional Claude Code hook (see Install).

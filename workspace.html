@@ -197,6 +197,9 @@ function stamp(key, fx, fy, fw, fh, paint) {
   ctx.drawImage(img, fx, fy);
 }
 
+// The same in room units, for still scenery
+const still = (key, x, y, w, h, paint) => stamp(key, x * R, y * R, w * R, h * R, paint);
+
 // Dithered light: dense checkerboard in the middle, sparse grid at the edge
 function glow(color, cx, cy, rx, ry, core = 0.3) {
   const x0 = Math.floor(cx - rx) - 1, y0 = Math.floor(cy - ry) - 1;
@@ -1631,7 +1634,13 @@ function el(tag, cls, str) {
   return e;
 }
 
+// Rebuilt only when what it shows changes, and not while it is hidden
+let listShown = '';
 function renderList(list) {
+  const shownNow = listEl.style.display === 'none' ? 'hidden' : JSON.stringify([world.ready,
+    list.map(c => [c.colour, c.parent, c.name, c.project, c.word || c.state, c.step || c.desc])]);
+  if (shownNow === listShown) return;
+  listShown = shownNow;
   listEl.replaceChildren();
   if (!list.length) {
     listEl.append(el('div', 'empty', world.ready ? 'No active Claude Code sessions right now.' : 'Reading sessions...'));
@@ -1668,8 +1677,14 @@ const WALLS = {
 };
 const wallLight = () => WALLS[currentView()][2];
 
+// The wall and floor never move, so each view's wall is painted once (again when the width changes)
 function drawRoom() {
-  const v = currentView(), [base, lines, light] = WALLS[v];
+  const v = currentView();
+  stamp(`room ${v} ${W}`, 0, 0, W * R, H * R, () => paintRoom(v));
+}
+
+function paintRoom(v) {
+  const [base, lines, light] = WALLS[v];
   rect(base, 0, 0, W, H);
   if (v === 'city') for (let x = 6; x < W; x += 24) rect(lines, x, 0, 1, 150); // wall panels
   else if (v === 'mountain') for (let y = 0; y < 150; y += 8) { // stacked logs with knots
@@ -1930,25 +1945,33 @@ function drawView(b, t, sk) {
   ctx.restore(); inkColor = null;
 }
 
+// Still scenery in the window (everything between the sky and the sill), stamped per view and light
+const scenery = (key, b, paint) => still(`view ${key} ${viewDay} ${b}`, 22, 20, 88, b - 20, paint);
+
 function viewMountain(b, t, sk) {
-  const far = [[22, 58], [30, 50], [38, 40], [47, 52], [56, 44], [66, 30], [78, 48], [88, 38], [98, 50], [110, 42]];
-  fillDown(tone('haze'), x => ridgeY(far, x), b);
-  for (let x = 22; x < 110; x++) { // snow on the high peaks
-    const y = Math.round(ridgeY(far, x));
-    if (y < 47) rect(viewDay ? C.white : C.blue, x, y, 1, Math.min(47 - y, 3 + Math.floor(hash(x) * 4)));
-  }
-  const mid = [[22, 68], [34, 60], [46, 69], [60, 57], [74, 67], [88, 61], [110, 71]];
-  fillDown(tone('rock'), x => ridgeY(mid, x), b);
-  for (const [x, h] of [[25, 9], [31, 12], [44, 8], [53, 10], [61, 12], [67, 9], [100, 12], [106, 9]]) pine(tone('pine'), x, b - 3, h);
-  // a cabin in the trees with its lamp on after dark
   const cx = 78, cy = b - 4;
-  rect(viewDay ? C.oak : C.wood, cx, cy - 7, 12, 7);
-  for (let i = 0; i < 5; i++) rect(tone('roof'), cx - 1 + i, cy - 8 - i, 14 - i * 2, 1);
-  rect(tone('roof'), cx + 9, cy - 12, 2, 4);
+  scenery('mountain far', b, () => {
+    const far = [[22, 58], [30, 50], [38, 40], [47, 52], [56, 44], [66, 30], [78, 48], [88, 38], [98, 50], [110, 42]];
+    fillDown(tone('haze'), x => ridgeY(far, x), b);
+    for (let x = 22; x < 110; x++) { // snow on the high peaks
+      const y = Math.round(ridgeY(far, x));
+      if (y < 47) rect(viewDay ? C.white : C.blue, x, y, 1, Math.min(47 - y, 3 + Math.floor(hash(x) * 4)));
+    }
+    const mid = [[22, 68], [34, 60], [46, 69], [60, 57], [74, 67], [88, 61], [110, 71]];
+    fillDown(tone('rock'), x => ridgeY(mid, x), b);
+    for (const [x, h] of [[25, 9], [31, 12], [44, 8], [53, 10], [61, 12], [67, 9], [100, 12], [106, 9]]) pine(tone('pine'), x, b - 3, h);
+    // a cabin in the trees with its lamp on after dark
+    rect(viewDay ? C.oak : C.wood, cx, cy - 7, 12, 7);
+    for (let i = 0; i < 5; i++) rect(tone('roof'), cx - 1 + i, cy - 8 - i, 14 - i * 2, 1);
+    rect(tone('roof'), cx + 9, cy - 12, 2, 4);
+  });
   smoke(cx + 10, cy - 13, t);
-  rect(sk.lights > 0 ? C.amber : C.navy, cx + 3, cy - 5, 2, 2);
-  rect(viewDay ? C.wood : C.night, cx + 7, cy - 5, 2, 5);
-  for (const [x, h] of [[23, 12], [36, 15], [48, 11], [72, 13], [94, 16], [109, 12]]) pine(tone('pineD'), x, b, h);
+  const lamp = sk.lights > 0;
+  scenery('mountain near ' + lamp, b, () => {
+    rect(lamp ? C.amber : C.navy, cx + 3, cy - 5, 2, 2);
+    rect(viewDay ? C.wood : C.night, cx + 7, cy - 5, 2, 5);
+    for (const [x, h] of [[23, 12], [36, 15], [48, 11], [72, 13], [94, 16], [109, 12]]) pine(tone('pineD'), x, b, h);
+  });
 }
 
 function viewIce(b, t, sk) {
@@ -1960,19 +1983,21 @@ function viewIce(b, t, sk) {
         if (glowing && (x + k) % 2 === 0 && hash(x * 7 + k * 13 + Math.floor(t * 1.5)) > 0.35 + k * 0.06) px(k < 3 ? C.green : C.blue, x, yc + k);
     }
   const peaks = [[22, 58], [29, 48], [35, 54], [43, 38], [51, 54], [59, 46], [67, 34], [77, 54], [85, 44], [93, 56], [101, 42], [110, 50]];
-  fillDown(tone('iceD'), x => ridgeY(peaks, x), lake);
-  for (let x = 22; x < 110; x++) { // sunlit faces on the left of each peak
-    const y = ridgeY(peaks, x);
-    if (ridgeY(peaks, x + 1) < y) rect(tone('ice'), x, Math.round(y), 1, Math.round((lake - y) * 0.55));
-  }
-  // frozen lake with the peaks mirrored in it
-  rect(tone('lake'), 22, lake, 88, 12);
-  for (let x = 22; x < 110; x++) {
-    const depth = Math.min(10, Math.round((lake - ridgeY(peaks, x)) * 0.22));
-    for (let y = lake; y < lake + depth; y++) if ((x + y) % 2 === 0) px(tone('iceD'), x, y);
-  }
-  for (const [x, y, w] of [[30, lake + 4, 9], [62, lake + 7, 12], [88, lake + 3, 7]]) rect(viewDay ? C.white : C.blue, x, y, w, 1);
-  fillDown(viewDay ? C.white : tone('ice'), x => b - 3 + Math.sin(x * 0.3) * 1.2, b);
+  scenery('ice', b, () => {
+    fillDown(tone('iceD'), x => ridgeY(peaks, x), lake);
+    for (let x = 22; x < 110; x++) { // sunlit faces on the left of each peak
+      const y = ridgeY(peaks, x);
+      if (ridgeY(peaks, x + 1) < y) rect(tone('ice'), x, Math.round(y), 1, Math.round((lake - y) * 0.55));
+    }
+    // frozen lake with the peaks mirrored in it
+    rect(tone('lake'), 22, lake, 88, 12);
+    for (let x = 22; x < 110; x++) {
+      const depth = Math.min(10, Math.round((lake - ridgeY(peaks, x)) * 0.22));
+      for (let y = lake; y < lake + depth; y++) if ((x + y) % 2 === 0) px(tone('iceD'), x, y);
+    }
+    for (const [x, y, w] of [[30, lake + 4, 9], [62, lake + 7, 12], [88, lake + 3, 7]]) rect(viewDay ? C.white : C.blue, x, y, w, 1);
+    fillDown(viewDay ? C.white : tone('ice'), x => b - 3 + Math.sin(x * 0.3) * 1.2, b);
+  });
 }
 
 function viewShore(b, t, sk) {
@@ -1991,14 +2016,15 @@ function viewShore(b, t, sk) {
   rect(C.night, bx + 4, by - 9, 1, 9);
   for (let i = 0; i < 8; i++) rect(viewDay ? C.white : C.blue, bx + 5, by - 9 + i, Math.ceil(i * 0.45), 1);
   // the lighthouse on its rock, sweeping a beam at night
-  const lx = 100;
-  fillDown(viewDay ? C.navy : C.night, x => sea + 6 + Math.abs(x - lx) * 0.6, beach, 88, 110);
-  for (let i = 0; i < 18; i++) rect(Math.floor(i / 4) % 2 ? C.amber : C.white, lx - 1 - Math.floor(i / 9), sea - 12 + i, 3 + Math.floor(i / 9) * 2, 1);
-  rect(C.night, lx - 3, sea - 13, 7, 1);
-  rect(C.night, lx - 2, sea - 17, 5, 1); px(C.night, lx, sea - 18);
-  const a = t * 1.1, dir = Math.cos(a), lit = !viewDay;
-  rect(lit ? C.amber : C.white, lx - 1, sea - 16, 3, 3);
-  px(C.night, lx - 2, sea - 16); px(C.night, lx + 2, sea - 16); px(C.night, lx - 2, sea - 14); px(C.night, lx + 2, sea - 14);
+  const lx = 100, a = t * 1.1, dir = Math.cos(a), lit = !viewDay;
+  scenery('shore lighthouse', b, () => {
+    fillDown(viewDay ? C.navy : C.night, x => sea + 6 + Math.abs(x - lx) * 0.6, beach, 88, 110);
+    for (let i = 0; i < 18; i++) rect(Math.floor(i / 4) % 2 ? C.amber : C.white, lx - 1 - Math.floor(i / 9), sea - 12 + i, 3 + Math.floor(i / 9) * 2, 1);
+    rect(C.night, lx - 3, sea - 13, 7, 1);
+    rect(C.night, lx - 2, sea - 17, 5, 1); px(C.night, lx, sea - 18);
+    rect(lit ? C.amber : C.white, lx - 1, sea - 16, 3, 3);
+    px(C.night, lx - 2, sea - 16); px(C.night, lx + 2, sea - 16); px(C.night, lx - 2, sea - 14); px(C.night, lx + 2, sea - 14);
+  });
   if (lit) {
     const len = Math.abs(dir) * 46;
     for (let k = 2; k < len; k++)
@@ -2014,36 +2040,47 @@ function viewShore(b, t, sk) {
 
 function viewVillage(b, t, sk) {
   const back = [[22, 60], [45, 54], [70, 60], [95, 52], [110, 56]];
-  fillDown(tone('field'), x => ridgeY(back, x), b);
-  for (let x = 22; x < 110; x++) // rows of crops on the far hill
-    for (let y = Math.round(ridgeY(back, x)) + 2; y < 70; y += 3) if ((x + y) % 2 === 0) px(tone('grass'), x, y);
-  fillDown(tone('grass'), x => 70 + Math.sin(x * 0.07 + 1) * 3, b);
-  // a windmill turning in the wind
   const wx = 34, wy = 56;
-  fillDown(viewDay ? C.white : tone('wall'), x => wy + Math.abs(x - wx - 0.5) * 3, b - 14, wx - 2, wx + 4);
-  rect(tone('roof'), wx - 1, wy - 1, 4, 2);
+  scenery('village hills', b, () => {
+    fillDown(tone('field'), x => ridgeY(back, x), b);
+    for (let x = 22; x < 110; x++) // rows of crops on the far hill
+      for (let y = Math.round(ridgeY(back, x)) + 2; y < 70; y += 3) if ((x + y) % 2 === 0) px(tone('grass'), x, y);
+    fillDown(tone('grass'), x => 70 + Math.sin(x * 0.07 + 1) * 3, b);
+    // a windmill turning in the wind
+    fillDown(viewDay ? C.white : tone('wall'), x => wy + Math.abs(x - wx - 0.5) * 3, b - 14, wx - 2, wx + 4);
+    rect(tone('roof'), wx - 1, wy - 1, 4, 2);
+  });
   const spin = t * (0.6 + weather.wind / 15);
   for (let i = 0; i < 4; i++) {
     const a = spin + i * Math.PI / 2;
     line(viewDay ? C.wood : C.navy, wx + 1, wy, wx + 1 + Math.cos(a) * 9, wy + Math.sin(a) * 9, R);
   }
   // houses with smoking chimneys; their lights go out late at night, like the city's
+  const houses = [[48, 9, 6, 1], [60, 11, 7, 0], [74, 8, 5, 1], [86, 10, 7, 0], [99, 9, 6, 1]];
+  scenery('village houses', b, () => {
+    for (const [hx, w, h, chimney] of houses) {
+      const base = b - 3 - (hx % 3);
+      rect(tone('wall'), hx, base - h, w, h);
+      for (let r = 0; r < Math.ceil(w / 2) + 1; r++) rect(tone('roof'), hx - 1 + r, base - h - 1 - r, w + 2 - r * 2, 1);
+      if (chimney) rect(tone('roof'), hx + w - 3, base - h - 4, 2, 3);
+      rect(viewDay ? C.oak : C.wood, hx + w - 4, base - 3, 2, 3);
+    }
+  });
   let i = 0;
-  for (const [hx, w, h, chimney] of [[48, 9, 6, 1], [60, 11, 7, 0], [74, 8, 5, 1], [86, 10, 7, 0], [99, 9, 6, 1]]) {
+  for (const [hx, w, h, chimney] of houses) {
     const base = b - 3 - (hx % 3);
-    rect(tone('wall'), hx, base - h, w, h);
-    for (let r = 0; r < Math.ceil(w / 2) + 1; r++) rect(tone('roof'), hx - 1 + r, base - h - 1 - r, w + 2 - r * 2, 1);
-    if (chimney) { rect(tone('roof'), hx + w - 3, base - h - 4, 2, 3); smoke(hx + w - 2, base - h - 5, t + hx, 5); }
+    if (chimney) smoke(hx + w - 2, base - h - 5, t + hx, 5);
     const on = (hash(hx) < sk.lights * 2.4) !== (hash(i++ * 13 + Math.floor(t / 3)) > 0.985);
     rect(on ? C.amber : viewDay ? C.blue : C.night, hx + 2, base - h + 2, 2, 2);
-    rect(viewDay ? C.oak : C.wood, hx + w - 4, base - 3, 2, 3);
   }
-  // a lamp post on the lane
-  rect(C.night, 70, b - 12, 1, 10);
-  px(viewDay ? C.white : C.amber, 70, b - 13);
-  if (!viewDay) glow(C.amber, 70, b - 12, 5, 4, 0.3);
-  for (let x = 22; x < 110; x += 4) { rect(viewDay ? C.oak : C.wood, x, b - 3, 1, 3); } // fence
-  rect(viewDay ? C.oak : C.wood, 22, b - 2, 88, 1);
+  // a lamp post on the lane, and the fence
+  scenery('village lane', b, () => {
+    rect(C.night, 70, b - 12, 1, 10);
+    px(viewDay ? C.white : C.amber, 70, b - 13);
+    if (!viewDay) glow(C.amber, 70, b - 12, 5, 4, 0.3);
+    for (let x = 22; x < 110; x += 4) { rect(viewDay ? C.oak : C.wood, x, b - 3, 1, 3); } // fence
+    rect(viewDay ? C.oak : C.wood, 22, b - 2, 88, 1);
+  });
 }
 
 const desertStars = Array.from({ length: 34 }, (_, i) => ({ x: 23 + hash(i * 3.1) * 86, y: 21 + hash(i * 7.7) * 40, p: i }));
@@ -2051,17 +2088,19 @@ function viewDesert(b, t, sk) {
   if (!sk.day && !dull()) // no city lights out here: far more stars
     for (const s of desertStars) if (Math.sin(t * (1 + s.p % 3) + s.p) > -0.2) px(s.p % 4 ? C.blue : C.white, s.x, s.y);
   const far = x => 64 + Math.sin(x * 0.08) * 4 + Math.sin(x * 0.21) * 2;
-  fillDown(tone('dune'), far, b);
-  const near = x => 75 + Math.sin(x * 0.06 + 1) * 5;
-  fillDown(tone('sand'), near, b);
-  for (let x = 22; x < 110; x++) // the shaded side of each dune
-    if (near(x + 1) > near(x)) for (let y = Math.round(near(x)); y < b; y++) if ((x + y) % 2 === 0) px(tone('dune'), x, y);
-  for (const [x, h] of [[40, 11], [86, 15], [100, 7]]) {
-    const base = Math.round(near(x)) + 2, c = tone('cactus');
-    rect(c, x, base - h, 2, h);
-    rect(c, x - 2, base - h + 4, 2, 1); rect(c, x - 2, base - h + 1, 1, 3);
-    if (h > 9) { rect(c, x + 2, base - h + 6, 2, 1); rect(c, x + 3, base - h + 3, 1, 3); }
-  }
+  scenery('desert', b, () => {
+    fillDown(tone('dune'), far, b);
+    const near = x => 75 + Math.sin(x * 0.06 + 1) * 5;
+    fillDown(tone('sand'), near, b);
+    for (let x = 22; x < 110; x++) // the shaded side of each dune
+      if (near(x + 1) > near(x)) for (let y = Math.round(near(x)); y < b; y++) if ((x + y) % 2 === 0) px(tone('dune'), x, y);
+    for (const [x, h] of [[40, 11], [86, 15], [100, 7]]) {
+      const base = Math.round(near(x)) + 2, c = tone('cactus');
+      rect(c, x, base - h, 2, h);
+      rect(c, x - 2, base - h + 4, 2, 1); rect(c, x - 2, base - h + 1, 1, 3);
+      if (h > 9) { rect(c, x + 2, base - h + 6, 2, 1); rect(c, x + 3, base - h + 3, 1, 3); }
+    }
+  });
 }
 
 function viewForest(b, t, sk) {
@@ -2069,9 +2108,11 @@ function viewForest(b, t, sk) {
     const x = 14 + (t * 6 + i * 37) % 110, y = 32 + i * 6 + Math.sin(t * 2 + i) * 1.5, up = Math.floor(t * 6 + i) % 2;
     px(C.night, x, y); px(C.night, x - 1, y - up); px(C.night, x + 1, y - up);
   }
-  for (let x = 20; x < 114; x += 4) pine(tone('pine'), x + Math.floor(hash(x) * 3), b - 8, 18 + Math.floor(hash(x * 2.3) * 12));
-  rect(tone('pineD'), 22, b - 9, 88, 9);
-  for (let x = 19; x < 114; x += 7) pine(tone('pineD'), x + Math.floor(hash(x * 5) * 3), b, 24 + Math.floor(hash(x * 1.7) * 14));
+  scenery('forest', b, () => {
+    for (let x = 20; x < 114; x += 4) pine(tone('pine'), x + Math.floor(hash(x) * 3), b - 8, 18 + Math.floor(hash(x * 2.3) * 12));
+    rect(tone('pineD'), 22, b - 9, 88, 9);
+    for (let x = 19; x < 114; x += 7) pine(tone('pineD'), x + Math.floor(hash(x * 5) * 3), b, 24 + Math.floor(hash(x * 1.7) * 14));
+  });
   if (!sk.day) for (let i = 0; i < 10; i++) { // fireflies between the trees
     const x = 26 + (i * 37) % 80 + Math.sin(t * 0.7 + i) * 4, y = 64 + (i * 13) % 20 + Math.sin(t * 1.1 + i * 2) * 3;
     if (Math.sin(t * 2 + i * 1.3) > 0.2) { px('#d8f06a', x, y); if (Math.sin(t * 2 + i * 1.3) > 0.85) glow('#d8f06a', Math.round(x), Math.round(y), 2, 2, 0.5); }
@@ -2110,7 +2151,8 @@ function drawSill(x, sill) {
 // Bigger touches in the room: on the wall between the window and the clock, the corners, the rug
 function drawTouches(t, sk) {
   const v = currentView(), night = !sk.day;
-  if (v === 'mountain') {
+  // nothing here moves: each view's touches are stamps, in boxes that hold them
+  if (v === 'mountain') still('touches mountain ' + night, 0, 0, 136, 116, () => {
     for (const [x, c] of [[118, C.amber], [123, C.blue]]) { // skis and poles against the wall
       rect(c, x, 34, 3, 80); rect(C.white, x, 34, 3, 2); px(c, x + 1, 33);
       rect(C.night, x, 70, 3, 1);
@@ -2123,7 +2165,8 @@ function drawTouches(t, sk) {
     rect(night ? C.amber : C.white, 7, 42, 5, 7);
     rect(C.night, 9, 42, 1, 7);
     if (night) glow(C.amber, 9, 46, 9, 9, 0.25);
-  } else if (v === 'ice') {
+  });
+  else if (v === 'ice') still('touches ice', 18, 18, 120, 74, () => {
     // frost creeping in from the corners of the glass
     for (const [cx, cy, sx, sy] of [[22, 20, 1, 1], [109, 20, -1, 1], [22, 89, 1, -1], [109, 89, -1, -1]])
       for (let i = 0; i < 9; i++) for (let j = 0; j < 9 - i; j++)
@@ -2135,17 +2178,22 @@ function drawTouches(t, sk) {
       rect(C.white, x, y, 4, 7); rect(C.white, x, y + 5, 7, 3); rect(C.blue, x, y + 2, 4, 1);
       rect(C.blue, x - 1, y + 9, 9, 1); px(C.blue, x - 1, y + 8); px(C.blue, x + 2, y + 8); px(C.blue, x + 5, y + 8);
     }
-  } else if (v === 'shore') {
+  });
+  else if (v === 'shore') {
     // a life ring on the wall
-    for (let dy = -8; dy <= 8; dy++) for (let dx = -8; dx <= 8; dx++) {
-      const d = Math.hypot(dx, dy);
-      if (d <= 8 && d >= 4.5) px(Math.floor((Math.atan2(dy, dx) + Math.PI) * 2 / Math.PI) % 2 ? C.white : C.amber, 125 + dx, 50 + dy);
-    }
-    line(C.white, 125, 32, 119, 44); line(C.white, 125, 32, 131, 44); px(C.night, 125, 31);
+    still('touches shore ring', 115, 29, 20, 31, () => {
+      for (let dy = -8; dy <= 8; dy++) for (let dx = -8; dx <= 8; dx++) {
+        const d = Math.hypot(dx, dy);
+        if (d <= 8 && d >= 4.5) px(Math.floor((Math.atan2(dy, dx) + Math.PI) * 2 / Math.PI) % 2 ? C.white : C.amber, 125 + dx, 50 + dy);
+      }
+      line(C.white, 125, 32, 119, 44); line(C.white, 125, 32, 131, 44); px(C.night, 125, 31);
+    });
     // a fishing net in the top corner with a starfish caught in it
-    for (let i = 0; i < 6; i++) { line(C.oak, 300 + i * 4, 0, 320, 20 - i * 4); line(C.oak, 300 + i * 4, 0, 300, i * 4); }
-    for (let i = 0; i < 5; i++) { const a = i * 2 * Math.PI / 5 - Math.PI / 2; line(C.amber, 309, 9, 309 + Math.cos(a) * 3, 9 + Math.sin(a) * 3, R); }
-  } else if (v === 'village') {
+    still('touches shore net', 298, 0, 24, 23, () => {
+      for (let i = 0; i < 6; i++) { line(C.oak, 300 + i * 4, 0, 320, 20 - i * 4); line(C.oak, 300 + i * 4, 0, 300, i * 4); }
+      for (let i = 0; i < 5; i++) { const a = i * 2 * Math.PI / 5 - Math.PI / 2; line(C.amber, 309, 9, 309 + Math.cos(a) * 3, 9 + Math.sin(a) * 3, R); }
+    });
+  } else if (v === 'village') still('touches village', 115, 38, 20, 20, () => {
     // a wreath of leaves and flowers
     for (let i = 0; i < 20; i++) {
       const a = i * Math.PI / 10;
@@ -2153,26 +2201,36 @@ function drawTouches(t, sk) {
       px(V.pine[0], 125 + Math.round(Math.cos(a + 0.15) * 6), 48 + Math.round(Math.sin(a + 0.15) * 6));
     }
     rect(C.amber, 124, 40, 3, 2);
-  } else if (v === 'desert') {
+  });
+  else if (v === 'desert') still('touches desert', 114, 38, 22, 11, () => {
     // a wide sun hat on a peg
     rect(C.night, 125, 40, 1, 2);
     blob(C.amber, 125, 42, [6, 8, 8]);
     rect(C.oak, 117, 45, 17, 1); rect(C.amber, 118, 46, 15, 1);
     rect(C.wood, 121, 44, 9, 1);
-  } else if (v === 'forest') {
+  });
+  else if (v === 'forest') {
     // ivy trailing from the window frame and the shelf
-    for (const [x0, y0, len] of [[24, 17, 18], [40, 17, 10], [104, 17, 14], [230, 65, 12], [262, 65, 20], [290, 65, 9]])
-      for (let k = 0; k < len; k++) {
-        const x = x0 + Math.round(Math.sin(k * 0.6 + x0) * 1.5);
-        px(V.pine[0], x, y0 + k);
-        if (k % 3 === 1) px(V.leaf[0], x + (k % 2 ? 1 : -1), y0 + k);
-      }
+    const ivy = list => () => {
+      for (const [x0, y0, len] of list)
+        for (let k = 0; k < len; k++) {
+          const x = x0 + Math.round(Math.sin(k * 0.6 + x0) * 1.5);
+          px(V.pine[0], x, y0 + k);
+          if (k % 3 === 1) px(V.leaf[0], x + (k % 2 ? 1 : -1), y0 + k);
+        }
+    };
+    still('touches forest window', 20, 16, 92, 20, ivy([[24, 17, 18], [40, 17, 10], [104, 17, 14]]));
+    still('touches forest shelf', 226, 64, 70, 22, ivy([[230, 65, 12], [262, 65, 20], [290, 65, 9]]));
   }
 }
 
 // The rug changes with the view: woven at the village, a kilim in the desert, a towel at the shore
 function drawRug() {
   const v = currentView();
+  still('rug ' + v, 110, 156, 124, 18, () => paintRug(v));
+}
+
+function paintRug(v) {
   if (v === 'village' || v === 'desert') {
     rect(C.oak, 112, 157, 120, 16);
     for (let y = 158; y < 172; y++)

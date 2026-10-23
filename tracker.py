@@ -558,6 +558,12 @@ class Tracker(threading.Thread):
         self.sessions = {}
         self.snapshot = ([], None)  # (active Claudes: sessions then helpers, the newest session)
         self.ready = False
+        # Folders hold months of old transcripts. Each second only the recent ones are looked at, and
+        # folders whose own time changed (a file was added); every 10 seconds everything is listed again,
+        # so an old session that is resumed still shows up.
+        self.listing = {}    # folder -> (folder mtime, recent .jsonl paths)
+        self.next_full = 0
+        self.parents = {}    # loose helper transcript -> its session id
 
     def run(self):
         while True:
@@ -576,29 +582,45 @@ class Tracker(threading.Thread):
         except OSError:
             folders = []
         fresh = set()  # session transcripts changed in the last day and a half
+        full = now >= self.next_full
+        if full:
+            self.next_full = now + 10
+            self.listing = {k: v for k, v in self.listing.items() if k in folders}
         for folder in folders:
             try:
-                files = [f for f in os.scandir(folder) if f.name.endswith('.jsonl')]
+                stamp = os.stat(folder).st_mtime
+                known = self.listing.get(folder)
+                if full or not known or known[0] != stamp:
+                    files = [(f.path, f.stat().st_mtime) for f in os.scandir(folder) if f.name.endswith('.jsonl')]
+                else:
+                    files = []
+                    for path in known[1]:
+                        try:
+                            files.append((path, os.stat(path).st_mtime))
+                        except OSError:
+                            pass
             except OSError:
                 continue
+            recent = [path for path, mtime in files if now - mtime <= DAY]
+            self.listing[folder] = (stamp, recent)
             loose = {}  # older Claude Code keeps helper transcripts (agent-*.jsonl) beside the sessions
-            for f in files:
+            for path in recent:
                 try:
-                    if now - f.stat().st_mtime > DAY:
-                        continue
-                    fresh.add(f.path)
-                    if f.name.startswith('agent-'):
-                        parent = parent_id(f.path)
+                    fresh.add(path)
+                    if os.path.basename(path).startswith('agent-'):
+                        if path not in self.parents:
+                            self.parents[path] = parent_id(path)
+                        parent = self.parents[path]
                         if parent:
-                            loose.setdefault(os.path.join(folder, parent + '.jsonl'), []).append(f.path)
+                            loose.setdefault(os.path.join(folder, parent + '.jsonl'), []).append(path)
                         continue
                     with self.lock:
-                        s = self.sessions.get(f.path)
+                        s = self.sessions.get(path)
                         if not s:
-                            s = self.sessions[f.path] = Session(f.path)
+                            s = self.sessions[path] = Session(path)
                         s.update()
                         if now - s.mtime < ACTIVE_SECS:
-                            self.scan_helpers(s, now, loose.get(f.path, []))
+                            self.scan_helpers(s, now, loose.get(path, []))
                 except Exception:
                     log_error()
         self.read_hooks(now)
@@ -609,6 +631,7 @@ class Tracker(threading.Thread):
                     if (s.parent.path not in fresh if s.parent else p not in fresh) or now - s.mtime > DAY]
             for p in gone:
                 del self.sessions[p]
+            self.parents = {p: v for p, v in self.parents.items() if p in fresh}
             mains = sorted((s for s in self.sessions.values() if not s.helper), key=lambda s: -s.mtime)
             active = [s for s in mains if now - s.mtime < ACTIVE_SECS][:MAX_PETS]
             helpers = []
