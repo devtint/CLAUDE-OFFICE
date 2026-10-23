@@ -210,6 +210,7 @@ Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes
 | City | Type a city and press FIND, then pick it. Sets the weather, time zone and label |
 | Units | Celsius or Fahrenheit |
 | View | What the window looks out on: City, Mountain, Ice Mountain, Shores, Village, Desert or Forest, or Random each day. Each one also changes a few things in the room (see below) |
+| Show in the room | A switch for each of: plant, tea cup, fish tank, cat, wall clock, calendar, Today board, mailbox, rug, view decorations and moth. Claudes skip what is hidden (no tea without the cup, no petting without the cat), and without the cat the portal opens by itself |
 | Alerts | A soft chime and a desktop notification when a Claude needs you |
 | Leave after idle | How long a quiet session stays in the room: 5, 10, 30 or 60 minutes |
 | Claudes at once | 2, 4, 6 or 8 |

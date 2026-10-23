@@ -11,7 +11,8 @@ leave through it when it ends; the portal only appears then, opened by the offic
 tuxedo or calico, picked in the settings). The cat also sits on idle keyboards, curls up beside sleeping Claudes and follows them
 around. A plant by the window grows with finished turns, passing tests, commits and pushes
 (kept in `~/.claude/office-plant.json`). Optional ambient sound (rain, typing, purring) is in the
-settings. They use the two computers to write code (CODE) and run commands
+settings, and so are switches to hide the plant, tea cup, fish tank, cat, clock, calendar, Today
+board, mailbox, rug, view decorations and moth. They use the two computers to write code (CODE) and run commands
 (RUN), show FIX after an error and DONE when finished, read at the bookshelf, browse on the laptop,
 go to the intercom to ask the user when they need approval or have a question, and sleep on the
 desk when idle. In free time they feed the

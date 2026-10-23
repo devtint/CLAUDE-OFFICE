@@ -31,6 +31,7 @@
   #settings h3 { margin: 12px 0 5px; font-size: 11px; color: #3ef07a; letter-spacing: 1px; font-weight: normal; }
   #settings label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 5px 0; }
   #settings label.check { justify-content: flex-start; }
+  #settings .grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 8px; }
   #settings input, #settings select, #settings button { font: inherit; color: #f1ead8; background: #1a2347;
     border: 1px solid #6fa8dc; border-radius: 0; padding: 3px 5px; }
   #settings select, #settings input[type=text] { width: 160px; box-sizing: border-box; }
@@ -63,6 +64,8 @@
     <label>Outside the window <select id="sView"><option value="city">City</option><option value="mountain">Mountain</option>
       <option value="ice">Ice Mountain</option><option value="shore">Shores</option><option value="village">Village</option>
       <option value="desert">Desert</option><option value="forest">Forest</option><option value="random">Random each day</option></select></label>
+    <h3>SHOW IN THE ROOM</h3>
+    <div class="grid" id="sShow"></div>
     <h3>ALERTS</h3>
     <label class="check"><input type="checkbox" id="sAlerts"> Chime and notify when a Claude needs you</label>
     <h3>ROOM</h3>
@@ -378,8 +381,13 @@ const cable = makeRope(298, 58, 311, 85, 12, 40);
 
 // Settings, the same as DEFAULTS in tracker.py; loaded from /settings (see the Settings panel below)
 const DEFAULTS = { tz: 'Asia/Bangkok', label: 'BKK', city: 'Bangkok', lat: 13.75, lon: 100.5, weather: true, units: 'C',
-  clock24: true, alerts: false, idle: 10, max: 8, helpers: true, calm: false, view: 'city', cat: 'orange', sound: false };
+  clock24: true, alerts: false, idle: 10, max: 8, helpers: true, calm: false, view: 'city', cat: 'orange', sound: false,
+  show_plant: true, show_cup: true, show_tank: true, show_cat: true, show_clock: true, show_calendar: true, show_today: true, show_mailbox: true, show_rug: true, show_touches: true, show_moth: true };
 const cfg = Object.assign({}, DEFAULTS);
+// Things in the room that can be hidden in the settings, each with its own switch (show_plant and so on)
+const SHOW = [['plant', 'Plant'], ['cup', 'Tea cup'], ['tank', 'Fish tank'], ['cat', 'Cat'], ['clock', 'Wall clock'],
+  ['calendar', 'Calendar'], ['today', 'Today board'], ['mailbox', 'Mailbox'], ['rug', 'Rug'], ['touches', 'View decorations'], ['moth', 'Moth']];
+const shown = k => cfg['show_' + k] !== false;
 
 function pop(str, x, y, color, life = 1.4) {
   pops.push({ str, x, y, color, age: 0, life });
@@ -672,7 +680,7 @@ const portalWanted = () => world.portal.peek > 0 || agents.some(a => a.action ==
 function updatePortal(dt) {
   const P = world.portal, want = portalWanted();
   P.peek = Math.max(0, P.peek - dt);
-  if (want) { P.idle = 0; P.wait += dt; if (P.wait > 12) P.go = true; } // in the end it opens without the cat
+  if (want) { P.idle = 0; P.wait += dt; if (P.wait > 12 || !shown('cat')) P.go = true; } // in the end it opens without the cat
   else { P.wait = 0; P.idle += dt; if (P.idle > 1.5) P.go = false; }
   P.open = Math.max(0, Math.min(1, P.open + (P.go ? dt * 2 : -dt * 1.5)));
 }
@@ -734,7 +742,8 @@ function nextCat() {
   else if (r < 0.63) startCat('sit', rand(4, 7));
   else if (r < 0.83) startCat('sleep', rand(10, 18));
   else if (r < 0.91) startCat('groom', rand(3, 5));
-  else startCat('watch', rand(6, 10)); // sits under the fish tank, staring, and paws at it
+  else if (shown('tank')) startCat('watch', rand(6, 10));
+  else startCat('sit', rand(4, 7)); // sits under the fish tank, staring, and paws at it
 }
 
 function updateCat(dt, t) {
@@ -925,8 +934,8 @@ function plan(a) {
     case 'read':  return startAction(a, 'read');
     case 'web':   return startAction(a, 'browse');
     case 'summon': return startAction(a, 'summon');
-    case 'mail':  return startAction(a, 'mail');
-    case 'calendar': return startAction(a, 'calendar');
+    case 'mail':  return startAction(a, shown('mailbox') ? 'mail' : 'think');
+    case 'calendar': return startAction(a, shown('calendar') ? 'calendar' : 'think');
     case 'wait':  return startAction(a, 'wait');
     case 'off':   return startAction(a, 'sleep');
     default:      return startAction(a, 'think');
@@ -935,15 +944,17 @@ function plan(a) {
 
 function freeMood(a) {
   const busyWith = act => agents.some(o => o !== a && o.action === act);
-  const moods = ['sit', 'walk', 'hop', 'dance', 'look', 'gaze', 'fish', 'fish', 'tea', 'stretch', 'book'];
-  if (!busyWith('cat')) moods.push('cat', 'cat');
-  if (!busyWith('water')) moods.push('water', ...(plantLook().droop ? ['water', 'water'] : []));
+  const moods = ['sit', 'walk', 'hop', 'dance', 'look', 'gaze', 'stretch', 'book'];
+  if (shown('tank')) moods.push('fish', 'fish');
+  if (shown('cup')) moods.push('tea');
+  if (shown('cat') && !busyWith('cat')) moods.push('cat', 'cat');
+  if (shown('plant') && !busyWith('water')) moods.push('water', ...(plantLook().droop ? ['water', 'water'] : []));
   if (wet()) moods.push('gaze', 'gaze'); // rain is worth watching
   if (findBuddy(a)) moods.push('highfive');
   if (agents.some(o => o !== a && o.level === a.level && o.info.project === a.info.project && FREE_ACTIONS.includes(o.action)))
     moods.push('chat', 'chat'); // teammates on the same project talk it over
   const h = world.sky ? world.sky.h : 12;
-  if (h >= 6 && h < 10) moods.push('tea', 'tea');         // morning tea
+  if (h >= 6 && h < 10 && shown('cup')) moods.push('tea', 'tea');         // morning tea
   if (h >= 23 || h < 5) moods.push('sleep', 'stretch');   // late night: yawning and dozing
   return pick(moods);
 }
@@ -1131,7 +1142,7 @@ function updateAgent(a, dt, t) {
       break;
     case 'cat': {
       if (a.level !== 'floor') break;
-      if (cat.base !== FLOOR_Y || cat.action === 'portal') { a.timer = Math.min(a.timer, 1); break; } // the cat is busy
+      if (!shown('cat') || cat.base !== FLOOR_Y || cat.action === 'portal') { a.timer = Math.min(a.timer, 1); break; } // the cat is busy
       const side = a.x < cat.x ? -1 : 1;
       if (!walkTo(a, cat.x + side * 13, 16, dt)) break;
       a.arrived = true;
@@ -1358,6 +1369,7 @@ function fillPanel() {
   $('sView').value = cfg.view;
   $('sCat').value = cfg.cat;
   $('sSound').checked = cfg.sound;
+  for (const [k] of SHOW) $('sShow_' + k).checked = shown(k);
   $('sResults').replaceChildren();
   $('sNote').textContent = params.has('noweather') ? '?noweather is on' : '';
 }
@@ -1416,6 +1428,14 @@ function bindSettings() {
   on('sView', 'change', e => { cfg.view = e.value; });
   on('sCat', 'change', e => { cfg.cat = e.value; });
   on('sSound', 'change', e => { cfg.sound = e.checked; soundOn(); });
+  for (const [k, name] of SHOW) {
+    const box = el('input');
+    box.type = 'checkbox'; box.id = 'sShow_' + k;
+    const label = el('label', 'check');
+    label.append(box, document.createTextNode(' ' + name));
+    $('sShow').append(label);
+    on(box.id, 'change', e => { cfg['show_' + k] = e.checked; });
+  }
   $('sFind').addEventListener('click', findCity);
   $('sCity').addEventListener('keydown', e => { if (e.key === 'Enter') findCity(); });
   $('sReset').addEventListener('click', () => { Object.assign(cfg, DEFAULTS); fillPanel(); fetchWeather(); saveSettings(); });
@@ -1586,7 +1606,7 @@ function drawWindow(t, sk) {
   rect(C.oak, x + w / 2 - 1, y, 2, h);
   rect(C.oak, x, y + h / 2 - 1, w, 2);
   rect(C.wood, x - 5, y + h + 3, w + 10, 3);
-  drawSill(x + 6, y + h + 3);
+  if (shown('touches')) drawSill(x + 6, y + h + 3);
 }
 
 // Moon drawn in its real phase: lit side on the right while waxing, left while waning
@@ -2092,7 +2112,7 @@ function updateSound(dt) {
   const t = ac.currentTime;
   const rain = weather.kind === 'storm' ? 0.12 : weather.kind === 'rain' ? 0.05 + Math.min(0.05, weather.precip * 0.01) : 0;
   sound.rain.gain.setTargetAtTime(rain, t, 0.8);
-  sound.purr.gain.setTargetAtTime(cat.purr > 0 || cat.action === 'purr' ? 0.07 : 0, t, 0.15);
+  sound.purr.gain.setTargetAtTime(shown('cat') && (cat.purr > 0 || cat.action === 'purr') ? 0.07 : 0, t, 0.15);
   const typists = agents.filter(a => a.action === 'work' && a.arrived && a.task && a.task !== 'done').length;
   sound.next -= dt;
   if (typists && sound.next <= 0) { burst(ac, t, 3200, 'highpass', 0.03, 0.03); sound.next = rand(0.07, 0.25) / typists; }
@@ -2744,7 +2764,7 @@ function update(dt, t) {
   if (!cfg.calm) updateMoth(dt);
   updatePops(dt);
   updateTank(dt, t);
-  updateCat(dt, t);
+  if (shown('cat')) updateCat(dt, t);
   updatePortal(dt);
   updateSound(dt);
   for (const a of agents) updateAgent(a, dt, t);
@@ -2765,28 +2785,28 @@ function draw(t) {
   ctx.save();
   ctx.translate(offsetX() * R, 0);
   drawLights(t, sk);
-  drawRug();
+  if (shown('rug')) drawRug();
   drawWindow(t, sk);
-  drawClock();
-  drawCalendar();
-  drawStats();
+  if (shown('clock')) drawClock();
+  if (shown('calendar')) drawCalendar();
+  if (shown('today')) drawStats();
   drawShelf(t);
-  drawTouches(t, sk);
-  drawPlant(t);
+  if (shown('touches')) drawTouches(t, sk);
+  if (shown('plant')) drawPlant(t);
   drawPortal(t);
   drawDesk();
-  if (!cfg.calm && world.portal.open > 0.5) drawMoth(t);
+  if (!cfg.calm && shown('moth') && world.portal.open > 0.5) drawMoth(t);
   monitors.forEach(m => drawMonitor(m, t));
   drawLaptop(t);
   drawKeyboards(t);
-  drawTank(t);
-  drawCup();
+  if (shown('tank')) drawTank(t);
+  if (shown('cup')) drawCup();
   for (const a of agents) if (a.level === 'desk' && a.scale > 0.05) drawAgent(a, t);
   drawComm(t);
-  drawMailbox();
-  drawCat(t);
+  if (shown('mailbox')) drawMailbox();
+  if (shown('cat')) drawCat(t);
   for (const a of agents) if (a.level === 'floor' && a.scale > 0.05) drawAgent(a, t);
-  for (const a of agents) if (a.action === 'water' && a.arrived) // drops from a watering can
+  if (shown('plant')) for (const a of agents) if (a.action === 'water' && a.arrived) // drops from a watering can
     for (let i = 0; i < 3; i++) px(C.blue, PLANT.x + 2 + i * 2, PLANT.pot - 22 + ((now * 18 + i * 5) % 20));
   drawPops();
   ctx.restore();
@@ -2853,14 +2873,14 @@ canvas.addEventListener('pointerdown', e => {
     const caller = callQueue()[0];
     if (caller) showCard(caller, e);
   }
-  else if (Math.abs(x - cat.x) < 9 && y > cat.base - 16 && y < cat.base + 3) { if (cat.action === 'sleep') pop('!', cat.x - 1, cat.base - 22, C.amber); petCat(); }
-  else if (hit(TANK.x - 1, TANK.y, TANK.x + TANK.w, TANK.y + TANK.h)) { feedFish(); tapTank(x); }
-  else if (hit(PLANT.x - 7, PLANT.pot - 6 - plantLook().stage * 4, PLANT.x + 7, PLANT.pot + 9)) showPlant(e);
+  else if (shown('cat') && Math.abs(x - cat.x) < 9 && y > cat.base - 16 && y < cat.base + 3) { if (cat.action === 'sleep') pop('!', cat.x - 1, cat.base - 22, C.amber); petCat(); }
+  else if (shown('tank') && hit(TANK.x - 1, TANK.y, TANK.x + TANK.w, TANK.y + TANK.h)) { feedFish(); tapTank(x); }
+  else if (shown('plant') && hit(PLANT.x - 7, PLANT.pot - 6 - plantLook().stage * 4, PLANT.x + 7, PLANT.pot + 9)) showPlant(e);
   else if (hit(PORTAL.x - PORTAL.rx, PORTAL.y - PORTAL.ry, PORTAL.x + PORTAL.rx, PORTAL.y + PORTAL.ry)) {
     if (world.portal.open > 0) world.portalFlare = 1; else world.portal.peek = 9; // asks the cat to open it
   }
-  else if (hit(138, 26, 188, 56)) { cfg.clock24 = !cfg.clock24; saveSettings(); }
-  else if (hit(CUP_X - 2, 110, CUP_X + 13, 128)) puffSteam(25, 12);
+  else if (shown('clock') && hit(138, 26, 188, 56)) { cfg.clock24 = !cfg.clock24; saveSettings(); }
+  else if (shown('cup') && hit(CUP_X - 2, 110, CUP_X + 13, 128)) puffSteam(25, 12);
   else if (hit(278, 52, 300, 62)) { world.piParty = 0.6; openSettings(); } // the Pi runs the room: its settings
   else if (hit(19, 17, 113, 93)) launchMeteor(now);
 });
