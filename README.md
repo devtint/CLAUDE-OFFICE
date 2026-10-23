@@ -146,6 +146,9 @@ What changed since the open-plan office:
 - The room draws about three times faster in every view, pixel for pixel the same: still things (the
   wall, the scenery out of the window, the rug and the touches in the room) are drawn once and reused.
   The server checks old transcripts every 10 seconds instead of every second. The server also forgets sessions older than a day and a half, so it stays small.
+- Fixes from testing on Windows: saving only some settings keeps the rest, Claudes come out of the
+  portal one at a time so their names do not pile up, the calendar follows `?date=`, the tab icon
+  loads, and rain and lines take a third of the fills they did.
 - Seasons and holidays: Halloween, Christmas, New Year and Valentine's Day decorations, and petals
   or leaves outside the window in spring and autumn.
 - The wall can be picked separately from the view, and the ambient sound has a volume.

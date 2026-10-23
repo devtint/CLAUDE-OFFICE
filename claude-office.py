@@ -223,6 +223,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send(json.dumps(pet.settings()), 'application/json')
         elif self.path == '/state':
             self.send(json.dumps(state(self.tracker)), 'application/json')
+        elif self.path == '/favicon.ico':  # the tab icon, so browsers do not log a missing file
+            try:
+                with open(os.path.join(HERE, 'icons', 'office.ico'), 'rb') as fh:
+                    data = fh.read()
+            except OSError:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header('Content-Type', 'image/x-icon')
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Cache-Control', 'max-age=86400')
+            self.end_headers()
+            self.wfile.write(data)
         elif self.path == '/quit':
             self.send('bye', 'text/plain')
             threading.Thread(target=self.server_ref.shutdown, daemon=True).start()

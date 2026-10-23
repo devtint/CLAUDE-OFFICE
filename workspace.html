@@ -108,7 +108,7 @@
 // and the window. When the session ends it leaves through the portal.
 // The page polls /state (see claude-office.py). Everything else runs here, so it costs no tokens.
 // URL options: ?demo (made-up sessions), ?hour=21 and ?weather=rain (preview the sky), ?noweather, ?view=shore,
-// ?wall=forest, ?date=10-31 (the decorations of another day).
+// ?wall=forest, ?date=10-31 (the decorations of another day), ?canvas=cpu (draw without the graphics card).
 // Settings (time zone, weather city, units, view, alerts, room): tap the Raspberry Pi on the shelf.
 
 // Internal resolution: the room is laid out on 320x180 and widens to match wide screens.
@@ -132,7 +132,10 @@ const STEP = 1 / 60; // fixed physics step
 const params = new URLSearchParams(location.search);
 
 const canvas = document.getElementById('scene');
-let ctx = canvas.getContext('2d', { alpha: false }); // the room covers the whole canvas; stamp() swaps it
+// ?canvas=cpu draws on the processor instead of the graphics card (willReadFrequently asks the browser
+// for that), to compare which costs less on a given computer
+const CANVAS_OPTS = params.get('canvas') === 'cpu' ? { willReadFrequently: true } : {};
+let ctx = canvas.getContext('2d', { alpha: false, ...CANVAS_OPTS }); // the room covers the whole canvas; stamp() swaps it
 const listEl = document.getElementById('list');
 const card = document.getElementById('card');
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -166,12 +169,21 @@ function frect(color, fx, fy, fw = 1, fh = 1) {
   ctx.fillRect(Math.round(fx), Math.round(fy), fw, fh);
 }
 
-// Lines are drawn in fine pixels; width is in fine pixels too
+// Lines are drawn in fine pixels; width is in fine pixels too. Steps that go straight down or
+// across are joined into one fill, so a raindrop or a leg costs one to three fills, not nine.
 function line(color, x0, y0, x1, y1, width = 1) {
   const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 0.5) * R;
   ink(color);
-  for (let i = 0; i <= n; i++)
-    ctx.fillRect(Math.round((x0 + (x1 - x0) * i / n) * R), Math.round((y0 + (y1 - y0) * i / n) * R), width, width);
+  let sx = NaN, sy = NaN, ex = NaN, ey = NaN;
+  const flush = () => ctx.fillRect(Math.min(sx, ex), Math.min(sy, ey), Math.abs(ex - sx) + width, Math.abs(ey - sy) + width);
+  for (let i = 0; i <= n; i++) {
+    const x = Math.round((x0 + (x1 - x0) * i / n) * R), y = Math.round((y0 + (y1 - y0) * i / n) * R);
+    if (x === ex && y === ey) continue;
+    if ((x === sx && x === ex && Math.abs(y - ey) === 1) || (y === sy && y === ey && Math.abs(x - ex) === 1)) { ex = x; ey = y; continue; }
+    if (sx === sx) flush(); // (NaN before the first step)
+    sx = ex = x; sy = ey = y;
+  }
+  if (sx === sx) flush();
 }
 
 // Rows of centered widths, handy for rounded shapes like clouds
@@ -194,7 +206,7 @@ function stamp(key, fx, fy, fw, fh, paint) {
     img = document.createElement('canvas');
     img.width = Math.max(1, Math.ceil(fw)); img.height = Math.max(1, Math.ceil(fh));
     const main = ctx;
-    ctx = img.getContext('2d');
+    ctx = img.getContext('2d', CANVAS_OPTS);
     ctx.translate(-fx, -fy);
     try { paint(); } finally { ctx = main; }
     if (stamps.size >= 200) stamps.delete(stamps.keys().next().value);
@@ -1144,7 +1156,11 @@ function updateAgent(a, dt, t) {
   switch (a.action) {
     case 'spawn':
       if (world.portal.open < 1) break; // waits on the other side until the cat opens the portal
-      if (a.scale === 0) { world.portalFlare = 0.8; pop(shortName(a.info.project || a.info.name, 8) || 'CLAUDE', PORTAL.x - 12, 86, C.green, 2); }
+      if (a.scale === 0) {
+        if (now - (world.portal.out ?? -9) < 0.7) break; // one at a time, so their names do not pile up
+        world.portal.out = now;
+        world.portalFlare = 0.8; pop(shortName(a.info.project || a.info.name, 8) || 'CLAUDE', PORTAL.x - 12, 86, C.green, 2);
+      }
       a.scale = Math.min(scale, a.scale + dt * 1.6);
       if (a.scale >= scale && a.sub === 0) { a.sub = 1; jump(a, -60, -25); a.timer = 0.6; }
       break;
@@ -3096,13 +3112,18 @@ function drawAgent(a, t) {
 
 // Wall calendar with the room's date
 function drawCalendar() {
-  const d = roomNow(), x = 194, y = 28;
-  rect(C.white, x, y, 22, 25);
-  rect(C.amber, x, y, 22, 7);
-  text(C.white, MONTHS[d.getUTCMonth()], x + 5, y + 1);
-  text(C.night, String(d.getUTCDate()).padStart(2, '0'), x + 3, y + 9, 2);
-  text(C.blue, DAYS[d.getUTCDay()], x + 5, y + 19);
-  px(C.navy, x + 5, y - 1); px(C.navy, x + 16, y - 1);
+  let d = roomNow();
+  const forced = /^(\d\d)-(\d\d)$/.exec(params.get('date') || ''); // ?date=12-24 previews another day
+  if (forced) d = new Date(Date.UTC(d.getUTCFullYear(), +forced[1] - 1, +forced[2]));
+  const x = 194, y = 28, m = d.getUTCMonth(), day = d.getUTCDate(), wd = d.getUTCDay();
+  still(`calendar ${m} ${day} ${wd}`, x, y - 1, 22, 26, () => { // one picture a day
+    rect(C.white, x, y, 22, 25);
+    rect(C.amber, x, y, 22, 7);
+    text(C.white, MONTHS[m], x + 5, y + 1);
+    text(C.night, String(day).padStart(2, '0'), x + 3, y + 9, 2);
+    text(C.blue, DAYS[wd], x + 5, y + 19);
+    px(C.navy, x + 5, y - 1); px(C.navy, x + 16, y - 1);
+  });
 }
 
 // Today's numbers, under the clock: turns finished, commits and pushes, tests passed and failed

@@ -124,9 +124,9 @@ CHOICES = {'units': ('C', 'F'), 'idle': (5, 10, 30, 60), 'max': (2, 4, 6, 8), 'v
 _settings = {'mtime': None, 'data': dict(DEFAULTS)}
 
 
-def clean_settings(d):
-    """Only known keys with sensible values; anything else falls back to the default."""
-    out = dict(DEFAULTS)
+def clean_settings(d, base=None):
+    """Only known keys with sensible values; anything else falls back to base (the defaults)."""
+    out = dict(base or DEFAULTS)
     if not isinstance(d, dict):
         return out
     for k, default in DEFAULTS.items():
@@ -174,7 +174,8 @@ def settings():
 
 
 def save_settings(d):
-    data = clean_settings(d)
+    # keys left out, or sent with a bad value, keep their saved values
+    data = clean_settings(d, settings())
     os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
     with open(SETTINGS_FILE + '.tmp', 'w', encoding='utf-8') as fh:
         json.dump(data, fh, indent=2)
