@@ -140,6 +140,9 @@ What changed since the open-plan office:
   moth).
 - The Raspberry Pi blinks NEW when a newer version is on GitHub; tap it to copy the update prompt.
 - Calm mode turns on by itself when your computer is set to reduce motion.
+- A SCREEN section in the settings: brightness, pixel shift against OLED burn-in, keep the screen
+  awake, and full screen (also on `F`, a double-click, and optionally the desktop shortcut). Keys
+  `S`, `M`, `[` and `]` open the settings, switch the sound and change the brightness.
 - Cards show the context tokens used, without a percentage, since transcripts do not record the window size.
 - After adding the hooks, restart Claude Code (or start a new session) so it picks them up.
 
@@ -203,6 +206,15 @@ Add these to the address to try things out:
 | `?weather=storm` | Shows a weather: `clear`, `cloudy`, `overcast`, `fog`, `rain`, `storm` or `snow` |
 | `?noweather` | Turns off the weather request (see below) |
 
+Keys, for a spare monitor or a small panel:
+
+| Key | What it does |
+|---|---|
+| `F` or double-click the room | Full screen on or off (Esc also leaves). The Claude app's side panel may not allow full screen |
+| `S` | Opens or closes the settings |
+| `M` | Ambient sound on or off |
+| `[` and `]` | Brightness down or up |
+
 ## Settings
 
 Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes apply at once.
@@ -217,6 +229,11 @@ Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes
 | Units | Celsius or Fahrenheit |
 | View | What the window looks out on: City, Mountain, Ice Mountain, Shores, Village, Desert or Forest, or Random each day. Each one also changes a few things in the room (see below) |
 | Show in the room | A switch for each of: plant, tea cup, fish tank, cat, wall clock, calendar, Today board, mailbox, rug, view decorations and moth. Claudes skip what is hidden (no tea without the cup, no petting without the cat), and without the cat the portal opens by itself |
+| Brightness | 30% to 100%. Darkens only the office page (a page cannot change the screen's own brightness); on an OLED darker pixels also wear less |
+| Pixel shift | On by default. Every two minutes the whole room moves 2 screen pixels along a small loop, too little to notice, so the still edges (window, shelf, clock) do not wear the same pixels of an OLED all day |
+| Keep the screen awake | Off by default. Stops the screen from sleeping while the office is showing, for a dedicated monitor. Works in Chrome, Edge and other browsers that support it |
+| Desktop shortcut opens in full screen | The **Claude Office** shortcut opens the office full screen. That window uses its own small browser profile in `~/.claude/office-browser`, because a browser that is already open ignores the full screen request otherwise |
+| Full screen | A button for the same thing as the `F` key |
 | Alerts | A soft chime and a desktop notification when a Claude needs you |
 | Leave after idle | How long a quiet session stays in the room: 5, 10, 30 or 60 minutes |
 | Claudes at once | 2, 4, 6 or 8 |

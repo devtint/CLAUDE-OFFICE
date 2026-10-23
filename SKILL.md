@@ -12,7 +12,9 @@ tuxedo or calico, picked in the settings). The cat also sits on idle keyboards, 
 around. A plant by the window grows with finished turns, passing tests, commits and pushes
 (kept in `~/.claude/office-plant.json`). Optional ambient sound (rain, typing, purring) is in the
 settings, and so are switches to hide the plant, tea cup, fish tank, cat, clock, calendar, Today
-board, mailbox, rug, view decorations and moth. They use the two computers to write code (CODE) and run commands
+board, mailbox, rug, view decorations and moth. For a dedicated screen the settings also have a
+brightness bar, pixel shift against OLED burn-in (on by default), keep the screen awake and full screen
+(also the F key or a double-click; S opens the settings, M switches sound, [ and ] change brightness). They use the two computers to write code (CODE) and run commands
 (RUN), show FIX after an error and DONE when finished, read at the bookshelf, browse on the laptop,
 go to the intercom to ask the user when they need approval or have a question, and sleep on the
 desk when idle. In free time they feed the

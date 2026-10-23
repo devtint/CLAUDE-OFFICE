@@ -19,6 +19,7 @@
   .state { color: #6fa8dc; }
   .step { color: #f1ead8; opacity: 0.75; word-break: break-word; }
   .empty { color: #6fa8dc; padding: 10px 0; }
+  #dim { position: fixed; inset: 0; z-index: 1; background: #000; opacity: 0; pointer-events: none; }
   #card { position: fixed; display: none; max-width: 260px; z-index: 2; pointer-events: none;
     background: #1a2347; border: 1px solid #6fa8dc; padding: 7px 9px; }
   #card div { word-break: break-word; }
@@ -44,12 +45,14 @@
   #settings .note { color: #6fa8dc; font-size: 11px; }
   #settings .update { display: none; margin-top: 10px; padding: 7px 8px; border: 1px solid #f2a33a; color: #f2a33a; }
   #settings .update.on { display: block; }
+  #settings input[type=range] { width: 160px; padding: 0; accent-color: #f2a33a; }
   #settings .update div { color: #f1ead8; margin: 4px 0; word-break: break-word; }
 </style>
 </head>
 <body>
 <canvas id="scene"></canvas>
 <div id="list"></div>
+<div id="dim"></div>
 <div id="card"></div>
 <div id="settings">
   <div class="box" role="dialog" aria-label="Settings">
@@ -70,6 +73,13 @@
       <option value="desert">Desert</option><option value="forest">Forest</option><option value="random">Random each day</option></select></label>
     <h3>SHOW IN THE ROOM</h3>
     <div class="grid" id="sShow"></div>
+    <h3>SCREEN</h3>
+    <label>Brightness <input type="range" id="sBright" min="30" max="100" step="10"></label>
+    <label class="check"><input type="checkbox" id="sShift"> Pixel shift (protects OLED screens)</label>
+    <label class="check"><input type="checkbox" id="sAwake"> Keep the screen awake<span class="note" id="sAwakeWhy"></span></label>
+    <label class="check"><input type="checkbox" id="sFullStart"> Desktop shortcut opens in full screen</label>
+    <label><button id="sFull">FULL SCREEN</button></label>
+    <div class="note">Keys: F full screen, S settings, M sound, [ and ] brightness</div>
     <h3>ALERTS</h3>
     <label class="check"><input type="checkbox" id="sAlerts"> Chime and notify when a Claude needs you</label>
     <h3>ROOM</h3>
@@ -387,6 +397,7 @@ const cable = makeRope(298, 58, 311, 85, 12, 40);
 // Settings, the same as DEFAULTS in tracker.py; loaded from /settings (see the Settings panel below)
 const DEFAULTS = { tz: 'Asia/Bangkok', label: 'BKK', city: 'Bangkok', lat: 13.75, lon: 100.5, weather: true, units: 'C',
   clock24: true, alerts: false, idle: 10, max: 8, helpers: true, calm: false, view: 'city', cat: 'orange', sound: false, updates: true,
+  brightness: 100, shift: true, awake: false, full: false,
   show_plant: true, show_cup: true, show_tank: true, show_cat: true, show_clock: true, show_calendar: true, show_today: true, show_mailbox: true, show_rug: true, show_touches: true, show_moth: true };
 const cfg = Object.assign({}, DEFAULTS);
 // Things in the room that can be hidden in the settings, each with its own switch (show_plant and so on)
@@ -1332,6 +1343,7 @@ async function loadSettings() {
   if (!d) try { d = JSON.parse(localStorage.getItem(STORE) || 'null'); } catch (e) { /* storage blocked */ }
   Object.assign(cfg, d || {});
   fetchWeather();
+  applyScreen();
 }
 
 let saveTimer = 0;
@@ -1379,6 +1391,14 @@ function fillPanel() {
   $('sCat').value = cfg.cat;
   $('sSound').checked = cfg.sound;
   $('sUpdates').checked = cfg.updates;
+  $('sBright').value = String(cfg.brightness);
+  $('sShift').checked = cfg.shift;
+  $('sAwake').checked = cfg.awake;
+  $('sAwake').disabled = !('wakeLock' in navigator);
+  $('sAwakeWhy').textContent = 'wakeLock' in navigator ? '' : ' (not in this browser)';
+  $('sFullStart').checked = cfg.full;
+  $('sFull').parentNode.style.display = document.fullscreenEnabled ? '' : 'none';
+  $('sFull').textContent = document.fullscreenElement ? 'LEAVE FULL SCREEN' : 'FULL SCREEN';
   showUpdate();
   for (const [k] of SHOW) $('sShow_' + k).checked = shown(k);
   $('sResults').replaceChildren();
@@ -1408,7 +1428,10 @@ function showUpdate() {
     el('div', '', u.latest ? 'Latest: ' + u.latest : ''), copy);
 }
 
-function closeSettings() { panel.classList.remove('open'); }
+function closeSettings() {
+  panel.classList.remove('open');
+  if (panel.contains(document.activeElement)) document.activeElement.blur(); // so the keys work again
+}
 
 // Look a city up with Open-Meteo's free geocoding; only runs when FIND is pressed
 async function findCity() {
@@ -1457,6 +1480,11 @@ function bindSettings() {
   on('sCat', 'change', e => { cfg.cat = e.value; });
   on('sSound', 'change', e => { cfg.sound = e.checked; soundOn(); });
   on('sUpdates', 'change', e => { cfg.updates = e.checked; });
+  on('sBright', 'input', e => { cfg.brightness = +e.value; applyScreen(); });
+  on('sShift', 'change', e => { cfg.shift = e.checked; applyScreen(); });
+  on('sAwake', 'change', e => { cfg.awake = e.checked; keepAwake(); });
+  on('sFullStart', 'change', e => { cfg.full = e.checked; });
+  $('sFull').addEventListener('click', toggleFull);
   for (const [k, name] of SHOW) {
     const box = el('input');
     box.type = 'checkbox'; box.id = 'sShow_' + k;
@@ -1467,11 +1495,68 @@ function bindSettings() {
   }
   $('sFind').addEventListener('click', findCity);
   $('sCity').addEventListener('keydown', e => { if (e.key === 'Enter') findCity(); });
-  $('sReset').addEventListener('click', () => { Object.assign(cfg, DEFAULTS); fillPanel(); fetchWeather(); saveSettings(); });
+  $('sReset').addEventListener('click', () => { Object.assign(cfg, DEFAULTS); fillPanel(); fetchWeather(); applyScreen(); saveSettings(); });
   $('sClose').addEventListener('click', closeSettings);
   panel.addEventListener('pointerdown', e => { if (e.target === panel) closeSettings(); });
   addEventListener('keydown', e => { if (e.key === 'Escape') closeSettings(); });
 }
+
+// ---------- Screen: brightness, pixel shift, full screen, keeping awake, keys ----------
+
+// Brightness only darkens this page (a page cannot set the screen's own); on an OLED darker pixels
+// also wear less. Pixel shift moves the whole room a few screen pixels every two minutes, so the
+// still edges (window, shelf, clock) do not sit on the same pixels all day.
+const SHIFTS = [[0, 0], [2, 0], [2, 2], [0, 2], [-2, 2], [-2, 0], [-2, -2], [0, -2], [2, -2]];
+const SHIFT_SECS = 120;
+
+function applyScreen() {
+  $('dim').style.opacity = String(1 - Math.min(100, Math.max(30, cfg.brightness || 100)) / 100);
+  resize();
+  keepAwake();
+}
+
+function pixelShift() {
+  const [dx, dy] = cfg.shift ? SHIFTS[Math.floor(Date.now() / 1000 / SHIFT_SECS) % SHIFTS.length] : [0, 0];
+  canvas.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : '';
+}
+
+function toggleFull() {
+  if (!document.fullscreenEnabled) return;
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else document.documentElement.requestFullscreen().catch(() => {});
+}
+
+document.addEventListener('fullscreenchange', () => {
+  $('sFull').textContent = document.fullscreenElement ? 'LEAVE FULL SCREEN' : 'FULL SCREEN';
+});
+
+// The browser lets go of the wake lock whenever the page is hidden, so it is asked for again on return
+let wake = null;
+async function keepAwake() {
+  if (!cfg.awake || !('wakeLock' in navigator) || document.hidden) {
+    if (wake) { wake.release().catch(() => {}); wake = null; }
+    return;
+  }
+  if (wake && !wake.released) return;
+  try { wake = await navigator.wakeLock.request('screen'); } catch (e) { wake = null; }
+}
+document.addEventListener('visibilitychange', keepAwake);
+
+addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.repeat || e.target.closest('input, select, textarea')) return;
+  const k = e.key.toLowerCase();
+  if (k === 'f') toggleFull();
+  else if (k === 's') panel.classList.contains('open') ? closeSettings() : openSettings();
+  else if (k === 'm') { cfg.sound = !cfg.sound; $('sSound').checked = cfg.sound; soundOn(); saveSettings(); }
+  else if (k === '[' || k === ']') {
+    cfg.brightness = Math.min(100, Math.max(30, cfg.brightness + (k === ']' ? 10 : -10)));
+    $('sBright').value = String(cfg.brightness);
+    applyScreen();
+    saveSettings();
+  }
+  else return;
+  e.preventDefault();
+});
 
 // ---------- Session list (shown under the room in tall panels) ----------
 
@@ -2924,16 +3009,20 @@ function resize() {
   W = Math.round(Math.min(Math.max(H * innerWidth / innerHeight, SCENE_W), 420));
   canvas.width = W * R;
   canvas.height = H * R;
-  const s = Math.min(innerWidth / W, innerHeight / H);
+  const edge = cfg.shift ? 6 : 0; // room for the pixel shift, so the room's edges never leave the screen
+  const s = Math.min((innerWidth - edge) / W, (innerHeight - edge) / H);
   canvas.style.width = Math.floor(W * s) + 'px';
   canvas.style.height = Math.floor(H * s) + 'px';
   const spare = innerHeight - Math.floor(H * s);
   listEl.style.display = spare > 80 ? 'block' : 'none';
   listEl.style.height = spare + 'px';
   document.body.style.justifyContent = spare > 80 ? 'flex-start' : 'center';
+  pixelShift();
 }
 
 addEventListener('resize', resize);
+canvas.addEventListener('dblclick', toggleFull);
+setInterval(pixelShift, 10e3);
 resize();
 bindSettings();
 loadSettings();

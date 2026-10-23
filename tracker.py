@@ -95,6 +95,10 @@ DEFAULTS = {
     'cat': 'orange',       # the cat's coat: orange tabby, tuxedo or calico
     'sound': False,        # ambient sound: rain, typing, purring
     'updates': True,       # ask GitHub once a day whether a newer version exists
+    'brightness': 100,     # percent, darkens only the office page
+    'shift': True,         # pixel shift: move the room a few pixels every two minutes (OLED burn-in)
+    'awake': False,        # keep the screen from sleeping while the office is shown
+    'full': False,         # the desktop shortcut opens the office in full screen
     # things in the room, each with its own switch
     'show_plant': True,
     'show_cup': True,
@@ -109,7 +113,8 @@ DEFAULTS = {
     'show_moth': True,
 }
 VIEWS = ('city', 'mountain', 'ice', 'shore', 'village', 'desert', 'forest', 'random')
-CHOICES = {'units': ('C', 'F'), 'idle': (5, 10, 30, 60), 'max': (2, 4, 6, 8), 'view': VIEWS, 'cat': ('orange', 'tuxedo', 'calico')}
+CHOICES = {'units': ('C', 'F'), 'idle': (5, 10, 30, 60), 'max': (2, 4, 6, 8), 'view': VIEWS, 'cat': ('orange', 'tuxedo', 'calico'),
+           'brightness': tuple(range(30, 101, 10))}
 _settings = {'mtime': None, 'data': dict(DEFAULTS)}
 
 
