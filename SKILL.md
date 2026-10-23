@@ -15,7 +15,7 @@ fish, pet the cat, sip tea, read, watch the sky or high-five each other. The lap
 tabs (sessions). The clock and the window follow the room's time zone and city weather (Bangkok by
 default). Tapping the Raspberry Pi on the shelf opens the settings: time zone, weather city, units,
 the view out of the window (city, mountain, ice mountain, shores, village, desert, forest or random,
-each with matching touches in the room), alerts, how long idle sessions stay, how many Claudes fit,
+each with its own wall and touches in the room), alerts, how long idle sessions stay, how many Claudes fit,
 subagents and calm mode. They are saved in `~/.claude/office-settings.json`. In a tall panel the sessions are listed under the room.
 
 It runs a small local server that only reads the transcripts in `~/.claude/projects`, so it costs

@@ -121,7 +121,7 @@ What changed since the open-plan office:
   sends nothing about you or your sessions; it can be turned off in the settings or with `?noweather`.
 - Alert sounds moved from the intercom to the settings.
 - New in the settings: seven views out of the window (city, mountain, ice mountain, shores, village,
-  desert, forest, or a random one each day), each with matching touches in the room.
+  desert, forest, or a random one each day), each with its own wall and matching touches in the room.
 - After adding the hooks, restart Claude Code (or start a new session) so it picks them up.
 
 ## Install
@@ -207,13 +207,13 @@ Each view has its own day and night, and the live weather still falls on it:
 
 | View | Outside | In the room |
 |---|---|---|
-| City | Skyline, office lights going off late at night | A cactus on the sill |
-| Mountain | Snowy peaks, pines, a cabin with smoke and a lit window | Skis and poles on the wall, a hanging lantern that glows at night, a pine sapling |
-| Ice Mountain | Icy peaks over a frozen lake, an aurora on clear nights | Frost in the window corners and on the wall, skates on a nail, a snow globe |
-| Shores | Waves, a sailboat, a lighthouse beam at night, moonlight on the water | A life ring, a fishing net with a starfish, a striped beach towel, a seashell |
-| Village | Fields, a windmill, houses with chimney smoke and lights, a lamp post | A flower wreath, a woven rug, flowers on the sill |
-| Desert | Dunes and cacti, far more stars at night | A sun hat, a patterned rug, two cacti |
-| Forest | Layered pines, birds by day, fireflies at night | Ivy trailing from the window and shelf, a fern |
+| City | Skyline, office lights going off late at night | Navy wall panels, a cactus on the sill |
+| Mountain | Snowy peaks, pines, a cabin with smoke and a lit window | A log cabin wall, skis and poles, a hanging lantern that glows at night, a pine sapling |
+| Ice Mountain | Icy peaks over a frozen lake, an aurora on clear nights | A wall of ice blocks, frost in the window corners, skates on a nail, a snow globe |
+| Shores | Waves, a sailboat, a lighthouse beam at night, moonlight on the water | Beach house planks, a life ring, a fishing net with a starfish, a striped beach towel, a seashell |
+| Village | Fields, a windmill, houses with chimney smoke and lights, a lamp post | Plaster between timber beams, a flower wreath, a woven rug, flowers on the sill |
+| Desert | Dunes and cacti, far more stars at night | Adobe bricks, a sun hat, a patterned rug, two cacti |
+| Forest | Layered pines, birds by day, fireflies at night | Dark wooden boards with moss, ivy trailing from the window and shelf, a fern |
 
 Add `?view=shore` (or any view) to the address to preview one without saving it.
 
