@@ -313,7 +313,6 @@ class Session:
         self.files = {}       # edited file path -> last edit time
         self.errors = 0
         self.context = 0      # tokens Claude read on its latest reply: how full the context is
-        self.peak_context = 0
         self.recent = deque(maxlen=14)  # (time, tool name, target)
         self.fake = None      # demo mode: a made-up (state, tool)
         self.todos = []       # the task list, from TodoWrite or the task tools: {'text', 'status'}
@@ -394,7 +393,6 @@ class Session:
                     'input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'))
                 if ctx:
                     self.context = ctx
-                    self.peak_context = max(self.peak_context, ctx)
             if msg.get('model') and msg['model'] != '<synthetic>':
                 self.model = msg['model']
             if msg.get('stop_reason') == 'end_turn':
@@ -465,15 +463,9 @@ class Session:
         """'Opus 5.5' for a session, the helper type (like 'Explore') for a helper."""
         return (self.label or 'Helper') if self.helper else model_info(self.model)[0]
 
-    def window(self):
-        """The context window. Transcripts do not record it, so it is a best guess."""
-        return 1_000_000 if self.peak_context > 200_000 or '1m' in self.model.lower() else 200_000
-
     def context_text(self):
-        if not self.context:
-            return ''
-        w = self.window()
-        return f'{self.context / w * 100:.0f}% ({short(self.context)} of {short(w)})'
+        # only the tokens used: transcripts do not record the window size, so no percentage
+        return f'{short(self.context)} tokens' if self.context else ''
 
     def status(self):
         """(state, tool). state: off, thinking, working, waiting, done, error."""

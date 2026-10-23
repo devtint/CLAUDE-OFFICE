@@ -49,9 +49,8 @@ Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packag
   portal with a parcel ("SENT"). The CODE screen shows the file and the lines changed (+12 -3).
 - **Today**, under the clock: turns finished, commits and pushes, tests passed and failed, and a dot
   in the colour of the busiest model. The wall calendar shows the date.
-- **Little signs:** a Claude whose context is over 80% full walks slower and yawns, naps for a moment
-  after the conversation is compacted, and stomps on a bug after three errors in a row. Background
-  commands light up the Raspberry Pi. Mail tools send a Claude to the mailbox, calendar tools to
+- **Little signs:** a Claude naps for a moment after the conversation is compacted, and stomps on a
+  bug after three errors in a row. Background commands light up the Raspberry Pi. Mail tools send a Claude to the mailbox, calendar tools to
   the calendar, and teammates on the same project chat in their free time.
 - **Free time** after a task: feed or tap the fish tank, pet the cat, sip tea, read a book,
   watch the sky (more often when it rains), stretch, dance or high-five another free agent.
@@ -61,7 +60,7 @@ Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packag
 - **Settings:** tap the Raspberry Pi on the shelf (the one with the little gear) to change the time
   zone, weather city, the view out of the window and more. See Settings below.
 - Hover or tap a Claude for its card: model, project, state, current step, turn time and context
-  use. In a tall side panel the sessions are also listed under the room.
+  tokens used. In a tall side panel the sessions are also listed under the room.
 - Tap things: the cat purrs, the tank gets fed, the cup steams, the window gets a shooting star, the
   clock switches between 24 and 12 hours, the plant shows its points.
 
@@ -141,6 +140,7 @@ What changed since the open-plan office:
   moth).
 - The Raspberry Pi blinks NEW when a newer version is on GitHub; tap it to copy the update prompt.
 - Calm mode turns on by itself when your computer is set to reduce motion.
+- Cards show the context tokens used, without a percentage, since transcripts do not record the window size.
 - After adding the hooks, restart Claude Code (or start a new session) so it picks them up.
 
 ## Install

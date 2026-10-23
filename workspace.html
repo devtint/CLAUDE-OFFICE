@@ -814,7 +814,7 @@ function spawnAgent(info) {
     x: PORTAL.x, y: 0, vx: 0, vy: 0, level: 'desk', seat: false, squash: 0, scale: 0,
     action: 'spawn', timer: Infinity, target: PORTAL.x, face: -1, hops: 0, happy: 0, yaw: 0, idleYaw: 0, spin: 0,
     activity: '', task: null, taskTime: 0, monitor: null, arrived: false, moving: false, sub: 0, after: null, buddy: null,
-    pushes: info.pushes || 0, ship: false, tired: false, napping: false, mate: null
+    pushes: info.pushes || 0, ship: false, napping: false, mate: null
   };
   agents.push(a);
   return a;
@@ -852,7 +852,7 @@ function walkTo(a, x, speed, dt) {
   if (Math.abs(dx) <= 1) return grounded(a);
   if (grounded(a)) {
     a.face = Math.sign(dx);
-    a.x += a.face * Math.min(speed * (a.tired ? 0.7 : 1) * dt, Math.abs(dx));
+    a.x += a.face * Math.min(speed * dt, Math.abs(dx));
     a.moving = true;
   }
   return false;
@@ -906,7 +906,6 @@ const DESK_ONLY = ['sit', 'sleep', 'gaze', 'fish', 'tea', 'book', 'work', 'busy'
 function applyState(a, c) {
   if (c.colour !== a.info.colour) a.mat = modelMat(c.colour); // the model can change mid-session
   a.info = c;
-  a.tired = (parseInt(c.context) || 0) >= 80;                 // context nearly full: slow and yawning
   a.napping = c.compacted != null && c.compacted < 12;       // just compacted: a quick nap
   // a new test result: cheer when it passes, wince when it fails
   if (c.test && c.test_age != null) {
@@ -1188,7 +1187,6 @@ function updateAgent(a, dt, t) {
       break;
   }
 
-  if (a.tired && Math.random() < dt * 0.06) pop('O', a.x - 1, bottomOf(a) - 18, C.white); // a yawn
   if (a.action === 'work' && a.arrived && a.task === 'fix' && (a.info.streak || 0) >= 3 && ready && Math.random() < dt * 0.4) {
     jump(a, -40); pop('!', a.x - 1, bottomOf(a) - 20, C.amber); // stomping on the bug
   }
@@ -1295,7 +1293,7 @@ function demoState() {
     const tool = state === 'working' ? DEMO_TOOLS[Math.floor(hash(k * 3 + i) * DEMO_TOOLS.length)] : '';
     const now = Date.now() / 1000;
     return Object.assign({ parent: '', state, tool, word: DEMO_WORDS[state], step: tool ? tool + ': src/app.js' : '',
-      turn: state === 'working' ? '1m 20s' : '', context: i === 1 ? '88% (176k of 200k)' : '34% (68k of 200k)', steps: 40 + i * 7, rate: 5 + i,
+      turn: state === 'working' ? '1m 20s' : '', context: i === 1 ? '176k tokens' : '68k tokens', steps: 40 + i * 7, rate: 5 + i,
       todos: i === 0 ? DEMO_TODOS.map((text, n) => ({ text, status: n < k % 5 ? 'completed' : n === k % 5 ? 'in_progress' : 'pending' })) : [],
       todo_age: 5, edit: { file: 'app.js', added: 12 + (k % 7), removed: k % 4 },
       test: i === 0 ? (k % 2 ? 'pass' : 'fail') : '', test_age: now % 10,
@@ -2655,7 +2653,7 @@ function drawAgent(a, t) {
     rect(C.white, bx - 1, by - 3 * s - 2, 2, 2);
     if (rotY([0, 0, 1], yaw)[2] < 0.3 || s < 0.5) return; // facing away: no face to see
     const eye = ex => toScreen(o, rotY([ex, h - 3 * s, d / 2], yaw));
-    const sleepy = a.action === 'sleep' || a.napping, blink = (t + a.x) % (a.tired ? 1.5 : 4) < (a.tired ? 0.4 : 0.12);
+    const sleepy = a.action === 'sleep' || a.napping, blink = (t + a.x) % 4 < 0.12;
     for (const ex of [-(w / 2 - 4 * s), w / 2 - 4 * s]) {
       const [x, y] = eye(ex);
       if (sleepy) rect(C.night, x - 1, y + 1, 2, 1);
