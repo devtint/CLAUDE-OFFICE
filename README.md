@@ -146,6 +146,7 @@ What changed since the open-plan office:
 - The room draws about three times faster in every view, pixel for pixel the same: still things (the
   wall, the scenery out of the window, the rug and the touches in the room) are drawn once and reused.
   The server checks old transcripts every 10 seconds instead of every second. The server also forgets sessions older than a day and a half, so it stays small.
+- The room rests at 10 fps while no Claude is working, and is back at full speed the moment one is.
 - A frame rate setting, 30 fps by default, so the room uses less CPU, also on high refresh monitors.
 - Cards show the context tokens used, without a percentage, since transcripts do not record the window size.
 - After adding the hooks, restart Claude Code (or start a new session) so it picks them up.
@@ -234,6 +235,7 @@ Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes
 | View | What the window looks out on: City, Mountain, Ice Mountain, Shores, Village, Desert or Forest, or Random each day. Each one also changes a few things in the room (see below) |
 | Show in the room | A switch for each of: plant, tea cup, fish tank, cat, wall clock, calendar, Today board, mailbox, rug, view decorations and moth. Claudes skip what is hidden (no tea without the cup, no petting without the cat), and without the cat the portal opens by itself |
 | Frame rate | 30 fps by default, or 60, 20 or 15. Lower uses less CPU (about a third less at 30 than 60, and half at 15 than 30), and it stays the same on 120 or 144 Hz monitors. Pixel art looks almost the same at 30 |
+| Slow to 10 fps while no Claude is working | On by default. After 20 quiet seconds (no Claude working, thinking or asking for you, nobody walking, the portal shut, no taps or keys) the room draws at 10 fps, using less than half the CPU. Anything happening brings your frame rate back at once. The room stays fully visible |
 | Brightness | 30% to 100%. Darkens only the office page (a page cannot change the screen's own brightness); on an OLED darker pixels also wear less |
 | Pixel shift | On by default. Every two minutes the whole room moves 2 screen pixels along a small loop, too little to notice, so the still edges (window, shelf, clock) do not wear the same pixels of an OLED all day |
 | Keep the screen awake | Off by default. Stops the screen from sleeping while the office is showing, for a dedicated monitor. Works in Chrome, Edge and other browsers that support it |

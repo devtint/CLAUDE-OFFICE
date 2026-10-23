@@ -96,6 +96,7 @@ DEFAULTS = {
     'sound': False,        # ambient sound: rain, typing, purring
     'updates': True,       # ask GitHub once a day whether a newer version exists
     'fps': 30,             # frames a second the room is drawn at: 60, 30, 20 or 15
+    'rest': True,          # slow to 10 fps while no Claude is working
     'brightness': 100,     # percent, darkens only the office page
     'shift': True,         # pixel shift: move the room a few pixels every two minutes (OLED burn-in)
     'awake': False,        # keep the screen from sleeping while the office is shown

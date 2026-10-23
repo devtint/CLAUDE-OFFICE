@@ -76,6 +76,7 @@
     <h3>SCREEN</h3>
     <label>Frame rate <select id="sFps"><option value="60">60 fps</option><option value="30">30 fps</option>
       <option value="20">20 fps</option><option value="15">15 fps</option></select></label>
+    <label class="check"><input type="checkbox" id="sRest"> Slow to 10 fps while no Claude is working</label>
     <label>Brightness <input type="range" id="sBright" min="30" max="100" step="10"></label>
     <label class="check"><input type="checkbox" id="sShift"> Pixel shift (protects OLED screens)</label>
     <label class="check"><input type="checkbox" id="sAwake"> Keep the screen awake<span class="note" id="sAwakeWhy"></span></label>
@@ -461,7 +462,7 @@ const cable = makeRope(298, 58, 311, 85, 12, 40);
 // Settings, the same as DEFAULTS in tracker.py; loaded from /settings (see the Settings panel below)
 const DEFAULTS = { tz: 'Asia/Bangkok', label: 'BKK', city: 'Bangkok', lat: 13.75, lon: 100.5, weather: true, units: 'C',
   clock24: true, alerts: false, idle: 10, max: 8, helpers: true, calm: false, view: 'city', cat: 'orange', sound: false, updates: true,
-  fps: 30, brightness: 100, shift: true, awake: false, full: false,
+  fps: 30, rest: true, brightness: 100, shift: true, awake: false, full: false,
   show_plant: true, show_cup: true, show_tank: true, show_cat: true, show_clock: true, show_calendar: true, show_today: true, show_mailbox: true, show_rug: true, show_touches: true, show_moth: true };
 const cfg = Object.assign({}, DEFAULTS);
 // Things in the room that can be hidden in the settings, each with its own switch (show_plant and so on)
@@ -1456,6 +1457,7 @@ function fillPanel() {
   $('sSound').checked = cfg.sound;
   $('sUpdates').checked = cfg.updates;
   $('sFps').value = String(cfg.fps);
+  $('sRest').checked = cfg.rest;
   $('sBright').value = String(cfg.brightness);
   $('sShift').checked = cfg.shift;
   $('sAwake').checked = cfg.awake;
@@ -1546,6 +1548,7 @@ function bindSettings() {
   on('sSound', 'change', e => { cfg.sound = e.checked; soundOn(); });
   on('sUpdates', 'change', e => { cfg.updates = e.checked; });
   on('sFps', 'change', e => { cfg.fps = +e.value; });
+  on('sRest', 'change', e => { cfg.rest = e.checked; });
   on('sBright', 'input', e => { cfg.brightness = +e.value; applyScreen(); });
   on('sShift', 'change', e => { cfg.shift = e.checked; applyScreen(); });
   on('sAwake', 'change', e => { cfg.awake = e.checked; keepAwake(); });
@@ -3075,12 +3078,25 @@ function draw(t) {
   ctx.restore(); inkColor = null;
 }
 
-let last = 0, acc = 0, now = 0, drawn = 0;
+let last = 0, acc = 0, now = 0, drawn = 0, busyAt = 0, touchedAt = -1e9;
+
+// Resting: after 20 quiet seconds (no Claude working, thinking or asking, nothing walking, the portal
+// shut, nobody touching the room) the room draws at 10 fps; anything happening brings the full rate back
+const BUSY = ['working', 'thinking', 'waiting', 'error'];
+function restful(t) {
+  const busy = agents.some(a => BUSY.includes(a.info.state) || a.moving || a.action === 'leave')
+    || world.portal.open > 0 || panel.classList.contains('open') || t - touchedAt < 10; // the cat's wandering does not count
+  if (busy) busyAt = t;
+  return cfg.rest && t - busyAt > 20;
+}
+addEventListener('pointerdown', () => { touchedAt = now; });
+addEventListener('keydown', () => { touchedAt = now; });
 // The frame rate setting (30 by default) skips screen refreshes, so a 60, 120 or 144 Hz monitor costs
-// the same; calm mode keeps it at 20 or lower. Skipped refreshes do no work at all.
+// the same; calm mode keeps it at 20 or lower, resting at 10. Skipped refreshes do no work at all.
 function frame(ms) {
   requestAnimationFrame(frame);
-  const t = ms / 1000, gap = 1 / (calm() ? Math.min(cfg.fps, 20) : cfg.fps);
+  const t = ms / 1000;
+  const gap = 1 / Math.min(calm() ? Math.min(cfg.fps, 20) : cfg.fps, restful(t) ? 10 : 60);
   if (t - drawn < gap - 0.004) return; // a little early is fine: refreshes never land exactly on time
   drawn = t - drawn < 2 * gap ? drawn + gap * Math.floor((t - drawn) / gap + 0.1) : t;
   now = t;
