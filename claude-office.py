@@ -4,7 +4,8 @@
 #   pythonw claude-office.py           start it, then open http://127.0.0.1:7788
 #   pythonw claude-office.py --stop    stop it
 # Pages: / the room, /?demo the room with made-up sessions. /settings holds what the Pi on the shelf sets.
-# The plant by the window keeps its growth in ~/.claude/office-plant.json.
+# The plant by the window keeps its growth in ~/.claude/office-plant.json. Once a day it asks GitHub
+# whether a newer version exists (turn it off in the settings); the Raspberry Pi shows NEW if so.
 # Only one runs at a time: a second start sees the port in use and exits.
 import datetime
 import json
@@ -73,7 +74,7 @@ def state(tracker):
             })
         today = day_numbers(tracker.sessions.values())
     return {'claudes': out, 'ready': tracker.ready, 'today': today, 'plant': plant(today),
-            'hooks': os.path.exists(pet.HOOKS_MARKER)}
+            'update': update_badge(), 'hooks': os.path.exists(pet.HOOKS_MARKER)}
 
 
 PLANT_FILE = os.path.join(pet.HOME, '.claude', 'office-plant.json')
@@ -126,6 +127,81 @@ def day_numbers(sessions):
             steps[colour] = steps.get(colour, 0) + n
     counts['top'] = max(steps, key=steps.get) if steps else ''
     return counts
+
+
+REPO = 'devtint/CLAUDE-OFFICE'
+UPDATE_FILE = os.path.join(pet.HOME, '.claude', 'office-update.json')
+
+
+def local_commit():
+    """The commit this copy is on, read straight from .git (no git needed); '' if it is not a clone."""
+    git = os.path.join(HERE, '.git')
+    try:
+        with open(os.path.join(git, 'HEAD'), encoding='utf-8') as fh:
+            head = fh.read().strip()
+        if not head.startswith('ref: '):
+            return head
+        ref = head[5:]
+        if os.path.exists(os.path.join(git, ref)):
+            with open(os.path.join(git, ref), encoding='utf-8') as fh:
+                return fh.read().strip()
+        with open(os.path.join(git, 'packed-refs'), encoding='utf-8') as fh:
+            for line in fh:
+                if line.rstrip().endswith(' ' + ref):
+                    return line.split()[0]
+    except OSError:
+        pass
+    return ''
+
+
+def read_update():
+    try:
+        with open(UPDATE_FILE, encoding='utf-8') as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def check_update():
+    """Once a day, ask GitHub how many commits main is ahead of this copy. Only the commit id is sent."""
+    local = local_commit()
+    if not local or not pet.settings()['updates']:
+        return
+    last = read_update()
+    if last.get('local') == local and time.time() - last.get('checked', 0) < 86400:
+        return
+    try:
+        req = urllib.request.Request(f'https://api.github.com/repos/{REPO}/compare/{local}...main',
+                                     headers={'User-Agent': 'claude-office', 'Accept': 'application/vnd.github+json'})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            d = json.load(r)
+        behind = d.get('ahead_by', 0) if d.get('status') in ('ahead', 'diverged') else 0
+        commits = d.get('commits') or []
+        latest = commits[-1]['commit']['message'].split('\n')[0][:120] if commits and behind else ''
+        data = {'checked': time.time(), 'local': local, 'behind': behind, 'latest': latest}
+    except Exception:  # offline, rate limited, or a commit GitHub does not know: try again in a day
+        data = {'checked': time.time(), 'local': local, 'behind': 0, 'latest': ''}
+    try:
+        with open(UPDATE_FILE + '.tmp', 'w', encoding='utf-8') as fh:
+            json.dump(data, fh)
+        os.replace(UPDATE_FILE + '.tmp', UPDATE_FILE)
+    except OSError:
+        pass
+
+
+def update_badge():
+    """What the Pi shows: how many changes are waiting, or None when this copy is current."""
+    d = read_update()
+    if not pet.settings()['updates'] or not d.get('behind') or d.get('local') != local_commit():
+        return None  # turned off, nothing new, or already updated since the last check
+    return {'behind': d['behind'], 'latest': d.get('latest', '')}
+
+
+def update_loop():
+    while True:
+        check_update()
+        time.sleep(3600)  # wakes hourly; check_update itself asks GitHub at most once a day
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -193,6 +269,7 @@ def main():
     tracker.start()
     server = ThreadingHTTPServer(('127.0.0.1', PORT), Handler)
     Handler.tracker, Handler.server_ref = tracker, server
+    threading.Thread(target=update_loop, daemon=True).start()
     server.serve_forever()
 
 

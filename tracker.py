@@ -94,6 +94,7 @@ DEFAULTS = {
     'view': 'city',        # what the window looks out on, with matching touches in the room
     'cat': 'orange',       # the cat's coat: orange tabby, tuxedo or calico
     'sound': False,        # ambient sound: rain, typing, purring
+    'updates': True,       # ask GitHub once a day whether a newer version exists
     # things in the room, each with its own switch
     'show_plant': True,
     'show_cup': True,

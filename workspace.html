@@ -42,6 +42,9 @@
   #settings #sResults button { display: block; width: 100%; text-align: left; margin-top: 3px; color: #f1ead8; }
   #settings .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
   #settings .note { color: #6fa8dc; font-size: 11px; }
+  #settings .update { display: none; margin-top: 10px; padding: 7px 8px; border: 1px solid #f2a33a; color: #f2a33a; }
+  #settings .update.on { display: block; }
+  #settings .update div { color: #f1ead8; margin: 4px 0; word-break: break-word; }
 </style>
 </head>
 <body>
@@ -51,6 +54,7 @@
 <div id="settings">
   <div class="box" role="dialog" aria-label="Settings">
     <div class="head"><span>SETTINGS</span><button id="sClose" aria-label="Close">X</button></div>
+    <div id="sUpdate" class="update"></div>
     <h3>CLOCK</h3>
     <label>Time zone <select id="sTz"></select></label>
     <label>Label <input type="text" id="sLabel" maxlength="4"></label>
@@ -73,8 +77,9 @@
     <label>Claudes at once <select id="sMax"><option>2</option><option>4</option><option>6</option><option>8</option></select></label>
     <label>Cat <select id="sCat"><option value="orange">Orange tabby</option><option value="tuxedo">Tuxedo</option><option value="calico">Calico</option></select></label>
     <label class="check"><input type="checkbox" id="sHelpers"> Show subagents</label>
+    <label class="check"><input type="checkbox" id="sUpdates"> Check for updates once a day</label>
     <label class="check"><input type="checkbox" id="sSound"> Ambient sound (rain, typing, purring)</label>
-    <label class="check"><input type="checkbox" id="sCalm"> Calm mode (fewer animations)</label>
+    <label class="check"><input type="checkbox" id="sCalm"> Calm mode (fewer animations)<span class="note" id="sCalmWhy"></span></label>
     <div class="foot"><span class="note" id="sNote"></span><button id="sReset">RESET</button></div>
   </div>
 </div>
@@ -370,7 +375,7 @@ const clouds = [
 ];
 const runLines = makeLines(42, 64, 40, 0.15);
 
-const world = { plant: null, portal: { open: 0, go: false, wait: 0, idle: 0, peek: 0 }, frames: 0, piParty: 0, tapped: false, portalFlare: 0, sessions: 0, ready: true, today: null, mailFlag: 0 };
+const world = { update: null, plant: null, portal: { open: 0, go: false, wait: 0, idle: 0, peek: 0 }, frames: 0, piParty: 0, tapped: false, portalFlare: 0, sessions: 0, ready: true, today: null, mailFlag: 0 };
 const steam = [];
 const pops = [];
 const drops = [];
@@ -381,13 +386,16 @@ const cable = makeRope(298, 58, 311, 85, 12, 40);
 
 // Settings, the same as DEFAULTS in tracker.py; loaded from /settings (see the Settings panel below)
 const DEFAULTS = { tz: 'Asia/Bangkok', label: 'BKK', city: 'Bangkok', lat: 13.75, lon: 100.5, weather: true, units: 'C',
-  clock24: true, alerts: false, idle: 10, max: 8, helpers: true, calm: false, view: 'city', cat: 'orange', sound: false,
+  clock24: true, alerts: false, idle: 10, max: 8, helpers: true, calm: false, view: 'city', cat: 'orange', sound: false, updates: true,
   show_plant: true, show_cup: true, show_tank: true, show_cat: true, show_clock: true, show_calendar: true, show_today: true, show_mailbox: true, show_rug: true, show_touches: true, show_moth: true };
 const cfg = Object.assign({}, DEFAULTS);
 // Things in the room that can be hidden in the settings, each with its own switch (show_plant and so on)
 const SHOW = [['plant', 'Plant'], ['cup', 'Tea cup'], ['tank', 'Fish tank'], ['cat', 'Cat'], ['clock', 'Wall clock'],
   ['calendar', 'Calendar'], ['today', 'Today board'], ['mailbox', 'Mailbox'], ['rug', 'Rug'], ['touches', 'View decorations'], ['moth', 'Moth']];
 const shown = k => cfg['show_' + k] !== false;
+// Calm mode, also on by itself when the computer asks for less motion
+const lessMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const calm = () => cfg.calm || lessMotion.matches;
 
 function pop(str, x, y, color, life = 1.4) {
   pops.push({ str, x, y, color, age: 0, life });
@@ -545,7 +553,7 @@ function launchMeteor(t) {
 }
 
 function updateMeteor(dt, t) {
-  if (!meteor.active && t > meteor.next && !world.sky?.day && !dull() && !cfg.calm) launchMeteor(t);
+  if (!meteor.active && t > meteor.next && !world.sky?.day && !dull() && !calm()) launchMeteor(t);
   if (!meteor.active) return;
   meteor.vy += 40 * dt;
   meteor.x += meteor.vx * dt; meteor.y += meteor.vy * dt; meteor.age += dt;
@@ -564,7 +572,7 @@ let dropBudget = 0;
 function updateDrops(dt) {
   const snow = weather.kind === 'snow';
   const rate = weather.kind === 'storm' ? 150 : weather.kind === 'rain' ? (weather.precip > 1 ? 110 : 70) : snow ? 14 : 0;
-  for (dropBudget += rate * (cfg.calm ? 0.4 : 1) * dt; dropBudget >= 1; dropBudget--)
+  for (dropBudget += rate * (calm() ? 0.4 : 1) * dt; dropBudget >= 1; dropBudget--)
     drops.push({ x: rand(10, 125), y: 18, vx: snow ? rand(-4, 4) : -weather.wind * 1.5, vy: snow ? rand(8, 14) : rand(110, 150), snow });
   for (const d of drops) {
     if (d.snow) d.vx = (d.vx + rand(-25, 25) * dt) * 0.98;
@@ -1304,6 +1312,7 @@ async function poll() {
     world.ready = d.ready !== false;
     world.today = d.today || null;
     world.plant = d.plant || null;
+    world.update = d.update || null;
     sync(d.claudes || []);
   } catch (e) {
     // server stopped: the desktop app window (opened with ?app) closes itself; elsewhere keep the last picture
@@ -1365,10 +1374,14 @@ function fillPanel() {
   $('sIdle').value = String(cfg.idle);
   $('sMax').value = String(cfg.max);
   $('sHelpers').checked = cfg.helpers;
-  $('sCalm').checked = cfg.calm;
+  $('sCalm').checked = calm();
+  $('sCalm').disabled = lessMotion.matches;
+  $('sCalmWhy').textContent = lessMotion.matches ? ' (on: your computer asks for less motion)' : '';
   $('sView').value = cfg.view;
   $('sCat').value = cfg.cat;
   $('sSound').checked = cfg.sound;
+  $('sUpdates').checked = cfg.updates;
+  showUpdate();
   for (const [k] of SHOW) $('sShow_' + k).checked = shown(k);
   $('sResults').replaceChildren();
   $('sNote').textContent = params.has('noweather') ? '?noweather is on' : '';
@@ -1378,6 +1391,23 @@ function openSettings() {
   fillPanel();
   panel.classList.add('open');
   card.style.display = 'none';
+}
+
+// A newer version is on GitHub: say so at the top of the settings, with the prompt to paste
+const UPDATE_PROMPT = 'Please update my Claude Office skill to the newest version from https://github.com/devtint/CLAUDE-OFFICE '
+  + '(follow the "Update from an older version" steps in its README).';
+
+function showUpdate() {
+  const u = world.update, box = $('sUpdate');
+  box.classList.toggle('on', !!u);
+  if (!u) return;
+  const copy = el('button', '', 'COPY THE UPDATE PROMPT');
+  copy.onclick = async () => {
+    try { await navigator.clipboard.writeText(UPDATE_PROMPT); copy.textContent = 'COPIED, PASTE IT INTO CLAUDE CODE'; }
+    catch (e) { copy.textContent = 'COULD NOT COPY'; }
+  };
+  box.replaceChildren(document.createTextNode(`NEW VERSION: ${u.behind} change${u.behind > 1 ? 's' : ''}`),
+    el('div', '', u.latest ? 'Latest: ' + u.latest : ''), copy);
 }
 
 function closeSettings() { panel.classList.remove('open'); }
@@ -1428,6 +1458,7 @@ function bindSettings() {
   on('sView', 'change', e => { cfg.view = e.value; });
   on('sCat', 'change', e => { cfg.cat = e.value; });
   on('sSound', 'change', e => { cfg.sound = e.checked; soundOn(); });
+  on('sUpdates', 'change', e => { cfg.updates = e.checked; });
   for (const [k, name] of SHOW) {
     const box = el('input');
     box.type = 'checkbox'; box.id = 'sShow_' + k;
@@ -2182,6 +2213,11 @@ function drawRaspberryPi(x, y, t) {
   gear.forEach((row, j) => [...row].forEach((ch, i) => { if (ch === '#') dot(g, x + 1 + i / 2, y - 3.5 + j / 2); }));
   rect(C.white, x + 5, y - 3, 3, 2);
   rect(C.navy, x + 18, y - 5, 1, 2);
+  if (world.update && Math.sin(t * 4) > -0.2) { // a newer version is out: tap the Pi
+    rect(C.amber, x + 2, y - 16, 15, 7);
+    text(C.night, 'NEW', x + 4, y - 15);
+    px(C.amber, x + 9, y - 9); px(C.amber, x + 9, y - 8);
+  }
   const party = world.piParty > 0;
   px(party ? pick([C.amber, C.green, C.white]) : Math.sin(t * 3) > -0.6 ? C.amber : C.navy, x + 14, y - 3);
   px(hash(Math.floor(t * (party ? 30 : 12))) > 0.45 ? C.green : C.navy, x + 16, y - 3);
@@ -2761,7 +2797,7 @@ function drawPops() {
 function update(dt, t) {
   updateSteam(dt);
   updateMeteor(dt, t);
-  if (!cfg.calm) updateMoth(dt);
+  if (!calm()) updateMoth(dt);
   updatePops(dt);
   updateTank(dt, t);
   if (shown('cat')) updateCat(dt, t);
@@ -2795,7 +2831,7 @@ function draw(t) {
   if (shown('plant')) drawPlant(t);
   drawPortal(t);
   drawDesk();
-  if (!cfg.calm && shown('moth') && world.portal.open > 0.5) drawMoth(t);
+  if (!calm() && shown('moth') && world.portal.open > 0.5) drawMoth(t);
   monitors.forEach(m => drawMonitor(m, t));
   drawLaptop(t);
   drawKeyboards(t);
@@ -2818,7 +2854,7 @@ function frame(ms) {
   acc += Math.min(0.1, now - last);
   last = now;
   while (acc >= STEP) { update(STEP, now); acc -= STEP; }
-  if (!cfg.calm || ++world.frames % 2) draw(now); // calm mode draws at half the frame rate
+  if (!calm() || ++world.frames % 2) draw(now); // calm mode draws at half the frame rate
   requestAnimationFrame(frame);
 }
 

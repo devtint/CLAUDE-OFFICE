@@ -26,7 +26,8 @@ subagents and calm mode. They are saved in `~/.claude/office-settings.json`. In 
 It runs a small local server that only reads the transcripts in `~/.claude/projects`, so it costs
 no tokens while it runs. The page's only outside requests are the weather from Open-Meteo and a
 city search when the user presses FIND in the settings (weather can be turned off there, or with
-`?noweather`). Only one server runs at a time, so the start command is always
+`?noweather`). The server asks GitHub once a day whether a newer version exists (only the commit
+id is sent; off in the settings), and the Raspberry Pi shows NEW when one does. Only one server runs at a time, so the start command is always
 safe to run.
 
 ## Start or show

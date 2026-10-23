@@ -216,8 +216,9 @@ Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes
 | Claudes at once | 2, 4, 6 or 8 |
 | Cat | Orange tabby, Tuxedo or Calico |
 | Show subagents | Helpers as small Claudes, or hidden |
+| Check for updates | Once a day the office asks GitHub whether a newer version exists, sending only the commit id it is on. When there is one, the Raspberry Pi blinks NEW and the settings show what changed with a button to copy the update prompt. Turn it off here |
 | Ambient sound | Off by default. Rain when it rains in your city (and thunder in storms), soft key clicks while a Claude types, purring when the cat is petted, a meow when it opens the portal. Browsers only play sound after you tap the page once, and it pauses while the page is hidden |
-| Calm mode | No meteors or moth, lighter rain, half the frame rate, for slower computers |
+| Calm mode | No meteors or moth, lighter rain, half the frame rate, for slower computers. Turns on by itself when your computer is set to reduce motion |
 
 Each view has its own day and night, and the live weather still falls on it:
 
@@ -256,6 +257,8 @@ The one request the page makes outside your computer is the weather for the room
 by default) from [Open-Meteo](https://open-meteo.com) (no key, no account, nothing about you or
 your sessions is sent), every 10 minutes, plus a city search when you press FIND in the settings.
 Turn the weather off in the settings, or add `?noweather` to the address.
+The server also asks GitHub once a day whether a newer version exists, sending only the commit id
+this copy is on. Turn that off with "Check for updates" in the settings.
 
 If something goes wrong, the last error is kept in `office-error.log` next to the scripts.
 
