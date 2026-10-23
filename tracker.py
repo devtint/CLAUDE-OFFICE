@@ -95,6 +95,7 @@ DEFAULTS = {
     'cat': 'orange',       # the cat's coat: orange tabby, tuxedo or calico
     'sound': False,        # ambient sound: rain, typing, purring
     'updates': True,       # ask GitHub once a day whether a newer version exists
+    'fps': 30,             # frames a second the room is drawn at: 60, 30, 20 or 15
     'brightness': 100,     # percent, darkens only the office page
     'shift': True,         # pixel shift: move the room a few pixels every two minutes (OLED burn-in)
     'awake': False,        # keep the screen from sleeping while the office is shown
@@ -114,7 +115,7 @@ DEFAULTS = {
 }
 VIEWS = ('city', 'mountain', 'ice', 'shore', 'village', 'desert', 'forest', 'random')
 CHOICES = {'units': ('C', 'F'), 'idle': (5, 10, 30, 60), 'max': (2, 4, 6, 8), 'view': VIEWS, 'cat': ('orange', 'tuxedo', 'calico'),
-           'brightness': tuple(range(30, 101, 10))}
+           'fps': (60, 30, 20, 15), 'brightness': tuple(range(30, 101, 10))}
 _settings = {'mtime': None, 'data': dict(DEFAULTS)}
 
 

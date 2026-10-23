@@ -143,6 +143,7 @@ What changed since the open-plan office:
 - A SCREEN section in the settings: brightness, pixel shift against OLED burn-in, keep the screen
   awake, and full screen (also on `F`, a double-click, and optionally the desktop shortcut). Keys
   `S`, `M`, `[` and `]` open the settings, switch the sound and change the brightness.
+- A frame rate setting, 30 fps by default, so the room uses less CPU, also on high refresh monitors.
 - Cards show the context tokens used, without a percentage, since transcripts do not record the window size.
 - After adding the hooks, restart Claude Code (or start a new session) so it picks them up.
 
@@ -229,6 +230,7 @@ Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes
 | Units | Celsius or Fahrenheit |
 | View | What the window looks out on: City, Mountain, Ice Mountain, Shores, Village, Desert or Forest, or Random each day. Each one also changes a few things in the room (see below) |
 | Show in the room | A switch for each of: plant, tea cup, fish tank, cat, wall clock, calendar, Today board, mailbox, rug, view decorations and moth. Claudes skip what is hidden (no tea without the cup, no petting without the cat), and without the cat the portal opens by itself |
+| Frame rate | 30 fps by default, or 60, 20 or 15. Lower uses less CPU (about a third less at 30 than 60, and half at 15 than 30), and it stays the same on 120 or 144 Hz monitors. Pixel art looks almost the same at 30 |
 | Brightness | 30% to 100%. Darkens only the office page (a page cannot change the screen's own brightness); on an OLED darker pixels also wear less |
 | Pixel shift | On by default. Every two minutes the whole room moves 2 screen pixels along a small loop, too little to notice, so the still edges (window, shelf, clock) do not wear the same pixels of an OLED all day |
 | Keep the screen awake | Off by default. Stops the screen from sleeping while the office is showing, for a dedicated monitor. Works in Chrome, Edge and other browsers that support it |
@@ -241,7 +243,7 @@ Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes
 | Show subagents | Helpers as small Claudes, or hidden |
 | Check for updates | Once a day the office asks GitHub whether a newer version exists, sending only the commit id it is on. When there is one, the Raspberry Pi blinks NEW and the settings show what changed with a button to copy the update prompt. Turn it off here |
 | Ambient sound | Off by default. Rain when it rains in your city (and thunder in storms), soft key clicks while a Claude types, purring when the cat is petted, a meow when it opens the portal. Browsers only play sound after you tap the page once, and it pauses while the page is hidden |
-| Calm mode | No meteors or moth, lighter rain, half the frame rate, for slower computers. Turns on by itself when your computer is set to reduce motion |
+| Calm mode | No meteors or moth, lighter rain, at most 20 frames a second, for slower computers. Turns on by itself when your computer is set to reduce motion |
 
 Each view has its own day and night, and the live weather still falls on it:
 
