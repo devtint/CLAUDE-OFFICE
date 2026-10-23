@@ -575,6 +575,7 @@ class Tracker(threading.Thread):
             folders = [d.path for d in os.scandir(PROJECTS) if d.is_dir()]
         except OSError:
             folders = []
+        fresh = set()  # session transcripts changed in the last day and a half
         for folder in folders:
             try:
                 files = [f for f in os.scandir(folder) if f.name.endswith('.jsonl')]
@@ -585,6 +586,7 @@ class Tracker(threading.Thread):
                 try:
                     if now - f.stat().st_mtime > DAY:
                         continue
+                    fresh.add(f.path)
                     if f.name.startswith('agent-'):
                         parent = parent_id(f.path)
                         if parent:
@@ -601,6 +603,12 @@ class Tracker(threading.Thread):
                     log_error()
         self.read_hooks(now)
         with self.lock:
+            # forget sessions not written for a day and a half (and their helpers), so a server left
+            # running for weeks stays small
+            gone = [p for p, s in self.sessions.items()
+                    if (s.parent.path not in fresh if s.parent else p not in fresh) or now - s.mtime > DAY]
+            for p in gone:
+                del self.sessions[p]
             mains = sorted((s for s in self.sessions.values() if not s.helper), key=lambda s: -s.mtime)
             active = [s for s in mains if now - s.mtime < ACTIVE_SECS][:MAX_PETS]
             helpers = []

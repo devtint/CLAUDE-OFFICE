@@ -143,6 +143,8 @@ What changed since the open-plan office:
 - A SCREEN section in the settings: brightness, pixel shift against OLED burn-in, keep the screen
   awake, and full screen (also on `F`, a double-click, and optionally the desktop shortcut). Keys
   `S`, `M`, `[` and `]` open the settings, switch the sound and change the brightness.
+- The room draws about three times faster, pixel for pixel the same: still things are drawn once and
+  reused. The server also forgets sessions older than a day and a half, so it stays small.
 - A frame rate setting, 30 fps by default, so the room uses less CPU, also on high refresh monitors.
 - Cards show the context tokens used, without a percentage, since transcripts do not record the window size.
 - After adding the hooks, restart Claude Code (or start a new session) so it picks them up.

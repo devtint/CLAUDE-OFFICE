@@ -191,7 +191,7 @@ function stamp(key, fx, fy, fw, fh, paint) {
     ctx = img.getContext('2d');
     ctx.translate(-fx, -fy);
     try { paint(); } finally { ctx = main; }
-    if (stamps.size >= 120) stamps.delete(stamps.keys().next().value);
+    if (stamps.size >= 200) stamps.delete(stamps.keys().next().value);
   }
   stamps.set(key, img);
   ctx.drawImage(img, fx, fy);
@@ -335,7 +335,26 @@ function faceUV(q, x, y) {
 
 // A box given by its bottom centre and size, turned by yaw around the model origin.
 // paint(face, u, v, x, y, b) may return a colour to texture a face; otherwise it is shaded.
-function box(o, yaw, [cx, y0, cz], [w, h, d], mat, paint) {
+// With a key (naming mat and paint), a box that looks the same as last frame is drawn from a stamp:
+// a Claude at its desk or a sitting cat costs one image instead of hundreds of fills. Boxes that
+// are moving are drawn directly, so they do not fill the cache with pictures used once.
+const boxSeen = new Map(); // key -> times drawn directly; the third time it becomes a stamp
+function box(o, yaw, pos, size, mat, paint, key) {
+  if (!key) return paintBox(o, yaw, pos, size, mat, paint);
+  const k = 'box ' + key + ' ' + [o.x, o.y, yaw, ...pos, ...size].map(v => Math.round(v * 1000)).join(' ');
+  const seen = boxSeen.get(k) || 0;
+  if (!stamps.has(k) && seen < 2) {
+    if (boxSeen.size > 400) boxSeen.clear();
+    boxSeen.set(k, seen + 1);
+    return paintBox(o, yaw, pos, size, mat, paint);
+  }
+  const reach = Math.hypot(Math.abs(pos[0]) + size[0] / 2, Math.abs(pos[2]) + size[2] / 2); // any yaw stays inside
+  const x0 = Math.floor((o.x - reach) * R) - 2, x1 = Math.ceil((o.x + reach) * R) + 2;
+  const y0 = Math.floor((o.y - pos[1] - size[1] - reach * TILT) * R) - 2, y1 = Math.ceil((o.y - pos[1] + reach * TILT) * R) + 2;
+  stamp(k, x0, y0, x1 - x0, y1 - y0, () => paintBox(o, yaw, pos, size, mat, paint));
+}
+
+function paintBox(o, yaw, [cx, y0, cz], [w, h, d], mat, paint) {
   const [x0, x1, y1, z0, z1] = [cx - w / 2, cx + w / 2, y0 + h, cz - d / 2, cz + d / 2];
   const faces = [
     ['front', [0, 0, 1],  [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]]],
@@ -1783,6 +1802,7 @@ function drawWindow(t, sk) {
 // Moon drawn in its real phase: lit side on the right while waxing, left while waning
 function drawMoon(cx, cy, r, phase) {
   cx = Math.round(cx); cy = Math.round(cy);
+  phase = Math.round(phase * 1000) / 1000; // moves 0.001 in about 40 minutes, so its stamp lasts that long
   if (moonLight() > 0.3) glow(C.blue, cx, cy, r + 5, r + 5);
   const k = Math.cos(phase * 2 * Math.PI);
   const craters = [[-3, -2], [2, 1], [-1, 3], [3, -4], [-4, 2], [4, 4], [1, -2], [2, -2], [1, -1], [2, -1]];
@@ -2572,14 +2592,16 @@ function drawTank(t) {
   }
 
   // sand with speckles and pebbles
-  const r = rng(11);
-  frect(C.oak, X + 1, sand, TW - 2, 7);
-  for (let i = 0; i < 46; i++) {
-    const v = r(), sx = X + 1 + Math.floor(r() * (TW - 2)), sy = sand + Math.floor(r() * 7);
-    frect(v < 0.5 ? C.wood : v < 0.8 ? C.amber : C.white, sx, sy);
-  }
-  frect(C.blue, X + 47, sand - 2, 6, 3); frect(C.navy, X + 48, sand - 1, 4, 2); frect(C.white, X + 48, sand - 2, 2, 1);
-  frect(C.white, X + 9, sand - 1, 3, 1); frect(C.blue, X + 8, sand - 2, 5, 1); // air stone
+  stamp('sand', X, sand - 2, TW, 9, () => {
+    const r = rng(11);
+    frect(C.oak, X + 1, sand, TW - 2, 7);
+    for (let i = 0; i < 46; i++) {
+      const v = r(), sx = X + 1 + Math.floor(r() * (TW - 2)), sy = sand + Math.floor(r() * 7);
+      frect(v < 0.5 ? C.wood : v < 0.8 ? C.amber : C.white, sx, sy);
+    }
+    frect(C.blue, X + 47, sand - 2, 6, 3); frect(C.navy, X + 48, sand - 1, 4, 2); frect(C.white, X + 48, sand - 2, 2, 1);
+    frect(C.white, X + 9, sand - 1, 3, 1); frect(C.blue, X + 8, sand - 2, 5, 1); // air stone
+  });
 
   // weed: each stalk sways more toward its tip, with little leaves
   [[5, 22], [12, 14], [18, 26], [54, 18], [59, 24]].forEach(([bx, len], i) => {
@@ -2690,7 +2712,7 @@ function drawCat(t) {
   const sleeping = cat.action === 'sleep' || (cat.action === 'snuggle' && cat.base === CAT_DESK && !catAir());
   const sitting = !cat.moving && !sleeping;
   const pawing = cat.action === 'portal' && cat.step === 'tap';
-  const breathe = sleeping || cat.purr > 0 || cat.action === 'purr' ? (Math.sin(t * 3) + 1) * 0.25 : 0;
+  const breathe = sleeping || cat.purr > 0 || cat.action === 'purr' ? Math.round((Math.sin(t * 3) + 1) * 2) / 8 : 0; // in steps, so each breath reuses its stamps
   if (cat.y > -3) rect(C.wood, Math.round(cat.x) - 7, cat.base, 14, 1);
   const fur = part => (face, u, v, fx, fy, b) => shade(FUR[c.mark(part, face, u, v)], b, fx, fy);
   const parts = [];
@@ -2712,10 +2734,10 @@ function drawCat(t) {
   const [bodyPos, bodySize] = sleeping ? [[0, 0, 0], [8, 4 + breathe, 10]] : sitting ? [[0, 2, -1], [6, 6 + breathe, 7]] : [[0, 2, 0], [6, 5, 12]];
   const headPos = sleeping ? [0, 0, 5] : sitting ? [0, 7 - groom, 3] : [0, 4, 7.5];
   const hy = headPos[1], hz = headPos[2] + 2.5;
-  parts.push({ z: 0, draw: () => box(o, yaw, bodyPos, bodySize, FUR.white, fur('body')) });
+  parts.push({ z: 0, draw: () => box(o, yaw, bodyPos, bodySize, FUR.white, fur('body'), 'cat body ' + cfg.cat) });
 
   parts.push({ z: depth(headPos, yaw) + 1, draw: () => {
-    box(o, yaw, headPos, [6, 5, 5], FUR.white, fur('head'));
+    box(o, yaw, headPos, [6, 5, 5], FUR.white, fur('head'), 'cat head ' + cfg.cat);
     [-1.8, 1.8].forEach((ex, i) => catEar(toScreen(o, rotY([ex, hy + 5 + (i && cat.twitch > 0 ? 0.5 : 0), headPos[2] + 0.5], yaw)), ex > 0, FUR[c.ears[i]].lit));
     if (rotY([0, 0, 1], yaw)[2] < 0.3) return; // face turned away
     const blink = sleeping || (t % 4.3) < 0.15;
@@ -2796,7 +2818,7 @@ function drawAgent(a, t) {
 
   // Body, antenna and face
   parts.push({ z: 0, draw: () => {
-    box(o, yaw, [0, 0, 0], [w, h, d], a.mat, rimLight);
+    box(o, yaw, [0, 0, 0], [w, h, d], a.mat, rimLight, 'claude ' + a.mat.lit);
     const [bx, by] = toScreen(o, rotY([0, h, 0], yaw));
     line(C.oak, bx, by, bx, by - 3 * s);
     rect(C.white, bx - 1, by - 3 * s - 2, 2, 2);
@@ -2824,7 +2846,7 @@ function drawAgent(a, t) {
     if (a.ship) ay = 9; // both arms up, holding the package
     if (typing) { ay = 4 + ((Math.floor(t * 10) + (side > 0 ? 1 : 0)) % 2) * 2; az = 3; }
     const pos = [side * (w / 2 + s), ay * s, az * s];
-    parts.push({ z: depth(pos, yaw), draw: () => box(o, yaw, pos, [2 * s, 3 * s, 3 * s], a.mat) });
+    parts.push({ z: depth(pos, yaw), draw: () => box(o, yaw, pos, [2 * s, 3 * s, 3 * s], a.mat, null, 'arm ' + a.mat.lit) });
   }
   parts.sort((p, q) => p.z - q.z).forEach(p => p.draw());
 
