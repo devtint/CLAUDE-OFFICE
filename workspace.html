@@ -126,7 +126,7 @@ const STEP = 1 / 60; // fixed physics step
 const params = new URLSearchParams(location.search);
 
 const canvas = document.getElementById('scene');
-const ctx = canvas.getContext('2d');
+let ctx = canvas.getContext('2d', { alpha: false }); // the room covers the whole canvas; stamp() swaps it
 const listEl = document.getElementById('list');
 const card = document.getElementById('card');
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -134,9 +134,16 @@ const pick = list => list[Math.floor(Math.random() * list.length)];
 
 // ---------- Drawing helpers ----------
 
+// Setting fillStyle parses the colour each time, so it is only set when it changes. Anything that
+// resets the context's state (restore, a new canvas size) must clear inkColor.
+let inkColor = null, inkCtx = null;
+function ink(color) {
+  if (color !== inkColor || ctx !== inkCtx) { ctx.fillStyle = inkColor = color; inkCtx = ctx; }
+}
+
 // Room pixels (each one is R x R fine pixels)
 function rect(color, x, y, w, h) {
-  ctx.fillStyle = color;
+  ink(color);
   ctx.fillRect(Math.round(x * R), Math.round(y * R), Math.round(w * R), Math.round(h * R));
 }
 
@@ -144,19 +151,19 @@ function px(color, x, y) { rect(color, x, y, 1, 1); }
 
 // Fine pixels: one canvas pixel at a room position, or a rectangle in fine-pixel units
 function dot(color, x, y) {
-  ctx.fillStyle = color;
+  ink(color);
   ctx.fillRect(Math.round(x * R), Math.round(y * R), 1, 1);
 }
 
 function frect(color, fx, fy, fw = 1, fh = 1) {
-  ctx.fillStyle = color;
+  ink(color);
   ctx.fillRect(Math.round(fx), Math.round(fy), fw, fh);
 }
 
 // Lines are drawn in fine pixels; width is in fine pixels too
 function line(color, x0, y0, x1, y1, width = 1) {
   const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 0.5) * R;
-  ctx.fillStyle = color;
+  ink(color);
   for (let i = 0; i <= n; i++)
     ctx.fillRect(Math.round((x0 + (x1 - x0) * i / n) * R), Math.round((y0 + (y1 - y0) * i / n) * R), width, width);
 }
@@ -170,13 +177,36 @@ function blob(color, cx, y, widths, dither = false) {
   });
 }
 
+// Patterns that cost thousands of pixel fills but rarely change (glows, dithered skies, the tank's
+// water) are painted once into a small canvas and then drawn as one image. key must name everything
+// the picture depends on; the box (fx, fy, fw, fh) is in fine pixels and must hold all of it.
+const stamps = new Map();
+function stamp(key, fx, fy, fw, fh, paint) {
+  let img = stamps.get(key);
+  if (img) stamps.delete(key); // refresh its place: the oldest unused ones go first
+  else {
+    img = document.createElement('canvas');
+    img.width = Math.max(1, Math.ceil(fw)); img.height = Math.max(1, Math.ceil(fh));
+    const main = ctx;
+    ctx = img.getContext('2d');
+    ctx.translate(-fx, -fy);
+    try { paint(); } finally { ctx = main; }
+    if (stamps.size >= 120) stamps.delete(stamps.keys().next().value);
+  }
+  stamps.set(key, img);
+  ctx.drawImage(img, fx, fy);
+}
+
 // Dithered light: dense checkerboard in the middle, sparse grid at the edge
 function glow(color, cx, cy, rx, ry, core = 0.3) {
-  for (let y = cy - ry; y <= cy + ry; y++)
-    for (let x = cx - rx; x <= cx + rx; x++) {
-      const d = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2;
-      if ((d < core && (x + y) % 2 === 0) || (d < 1 && x % 2 === 0 && y % 2 === 0)) px(color, x, y);
-    }
+  const x0 = Math.floor(cx - rx) - 1, y0 = Math.floor(cy - ry) - 1;
+  stamp(`glow ${color} ${cx} ${cy} ${rx} ${ry} ${core}`, x0 * R, y0 * R, (Math.ceil(2 * rx) + 3) * R, (Math.ceil(2 * ry) + 3) * R, () => {
+    for (let y = cy - ry; y <= cy + ry; y++)
+      for (let x = cx - rx; x <= cx + rx; x++) {
+        const d = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2;
+        if ((d < core && (x + y) % 2 === 0) || (d < 1 && x % 2 === 0 && y % 2 === 0)) px(color, x, y);
+      }
+  });
 }
 
 function rng(seed) {
@@ -213,12 +243,16 @@ const FONT = {
 };
 
 function text(color, str, x, y, scale = 1) {
-  for (const ch of String(str)) {
-    const g = FONT[ch];
-    if (g) for (let i = 0; i < 15; i++)
-      if (g[i] === '1') rect(color, x + (i % 3) * scale, y + Math.floor(i / 3) * scale, scale, scale);
-    x += 4 * scale;
-  }
+  str = String(str);
+  if (!str) return;
+  stamp(`text ${color} ${scale} ${str}`, Math.round(x * R), Math.round(y * R), str.length * 4 * scale * R, 5 * scale * R, () => {
+    for (const ch of str) {
+      const g = FONT[ch];
+      if (g) for (let i = 0; i < 15; i++)
+        if (g[i] === '1') rect(color, x + (i % 3) * scale, y + Math.floor(i / 3) * scale, scale, scale);
+      x += 4 * scale;
+    }
+  });
 }
 
 // Text the pixel font can draw: upper case, known glyphs only
@@ -281,8 +315,14 @@ function fillPoly(pts, colorAt) {
       if ((a[1] <= cy) !== (b[1] <= cy)) xs.push(a[0] + (cy - a[1]) / (b[1] - a[1]) * (b[0] - a[0]));
     });
     if (xs.length < 2) continue;
-    for (let x = Math.round(Math.min(...xs)); x < Math.round(Math.max(...xs)); x++)
-      frect(colorAt((x + 0.5) / R, cy / R, x, y), x, y);
+    // neighbouring pixels of one colour go out as one fill
+    const x0 = Math.round(Math.min(...xs)), x1 = Math.round(Math.max(...xs));
+    let start = x0, run = null;
+    for (let x = x0; x < x1; x++) {
+      const c = colorAt((x + 0.5) / R, cy / R, x, y);
+      if (c !== run) { if (run !== null) frect(run, start, y, x - start, 1); start = x; run = c; }
+    }
+    if (run !== null) frect(run, start, y, x1 - start, 1);
   }
 }
 
@@ -1660,9 +1700,11 @@ function drawLights(t, s) {
   if (wet()) return;
   const weak = s.twilight || dull() || bodyCovered(t, s) || (!s.day && moonLight() < 0.3);
   const step = weak ? 8 : 4, color = s.day || s.twilight ? C.amber : C.blue;
-  for (let y = 153; y < H; y += 2)
-    for (let x = 30 - (y - 153); x < 100 - (y - 153); x++)
-      if ((x + (y % 4 === 1 ? step / 2 : 0)) % step === 0) px(color, x, y);
+  stamp(`floor ${step} ${color}`, -30 * R, 150 * R, 135 * R, (H - 150) * R, () => {
+    for (let y = 153; y < H; y += 2)
+      for (let x = 30 - (y - 153); x < 100 - (y - 153); x++)
+        if ((x + (y % 4 === 1 ? step / 2 : 0)) % step === 0) px(color, x, y);
+  });
 }
 
 // ---------- Window ----------
@@ -1673,18 +1715,24 @@ function drawWindow(t, sk) {
   rect(C.oak, x - 3, y - 3, w + 6, h + 6);
   rect(lightning() ? C.white : bright && !wet() ? C.blue : C.navy, x, y, w, h);
   // Grey skies: pale over blue when overcast, dim over navy when raining by day
-  if (bright && dull() && !lightning())
-    for (let yy = y; yy < y + h; yy++)
-      for (let xx = x; xx < x + w; xx++)
-        if ((xx + yy) % 2 === 0) px(wet() ? C.blue : C.white, xx, yy);
+  if (bright && dull() && !lightning()) {
+    const grey = wet() ? C.blue : C.white;
+    stamp('grey sky ' + grey, x * R, y * R, w * R, h * R, () => {
+      for (let yy = y; yy < y + h; yy++)
+        for (let xx = x; xx < x + w; xx++)
+          if ((xx + yy) % 2 === 0) px(grey, xx, yy);
+    });
+  }
 
   // Horizon: warm glow at sunrise and sunset, pale haze by day
-  for (let yy = y + h - 30; yy < y + h; yy++)
-    for (let xx = x; xx < x + w; xx++) {
-      const low = yy > y + h - 14;
-      if (sk.twilight && (low ? (xx + yy) % 2 === 0 : xx % 2 === 0 && yy % 2 === 0)) px(C.amber, xx, yy);
-      else if (bright && low && xx % 2 === 0 && yy % 2 === 0) px(C.white, xx, yy);
-    }
+  if (sk.twilight || bright) stamp('horizon ' + (sk.twilight ? 'dusk' : 'day'), x * R, (y + h - 30) * R, w * R, 30 * R, () => {
+    for (let yy = y + h - 30; yy < y + h; yy++)
+      for (let xx = x; xx < x + w; xx++) {
+        const low = yy > y + h - 14;
+        if (sk.twilight && (low ? (xx + yy) % 2 === 0 : xx % 2 === 0 && yy % 2 === 0)) px(C.amber, xx, yy);
+        else if (bright && low && xx % 2 === 0 && yy % 2 === 0) px(C.white, xx, yy);
+      }
+  });
 
   if (!sk.day && !dull()) stars.forEach((s, i) => {
     if (sk.twilight && i % 2) return; // only the brightest stars at dusk and dawn
@@ -1704,21 +1752,25 @@ function drawWindow(t, sk) {
   if (!wet()) drawPlane(t);
   drawMeteor();
   if (storm.flash > 0.2) for (let i = 1; i < storm.bolt.length; i++) line(C.white, ...storm.bolt[i - 1], ...storm.bolt[i], R);
-  ctx.restore();
+  ctx.restore(); inkColor = null;
 
   drawView(y + h, t, sk);
 
   ctx.save();
   ctx.beginPath(); ctx.rect(x * R, y * R, w * R, h * R); ctx.clip();
-  if (weather.kind === 'fog')
-    for (let yy = y; yy < y + h; yy++)
-      for (let xx = x; xx < x + w; xx++)
-        if (yy > y + h - 30 ? (xx + yy) % 2 === 0 : xx % 2 === 0 && yy % 2 === 0) px(sk.day ? C.white : C.blue, xx, yy);
+  if (weather.kind === 'fog') {
+    const mist = sk.day ? C.white : C.blue;
+    stamp('fog ' + mist, x * R, y * R, w * R, h * R, () => {
+      for (let yy = y; yy < y + h; yy++)
+        for (let xx = x; xx < x + w; xx++)
+          if (yy > y + h - 30 ? (xx + yy) % 2 === 0 : xx % 2 === 0 && yy % 2 === 0) px(mist, xx, yy);
+    });
+  }
   for (const d of drops) {
     if (d.snow) px(C.white, d.x, d.y);
     else line(sk.day ? C.white : C.blue, d.x, d.y, d.x - d.vx * 0.03, d.y - 4);
   }
-  ctx.restore();
+  ctx.restore(); inkColor = null;
 
   line(C.blue, x + 4, y + 10, x + 10, y + 4);
   line(C.blue, x + 48, y + 46, x + 52, y + 42);
@@ -1734,24 +1786,28 @@ function drawMoon(cx, cy, r, phase) {
   if (moonLight() > 0.3) glow(C.blue, cx, cy, r + 5, r + 5);
   const k = Math.cos(phase * 2 * Math.PI);
   const craters = [[-3, -2], [2, 1], [-1, 3], [3, -4], [-4, 2], [4, 4], [1, -2], [2, -2], [1, -1], [2, -1]];
-  for (let dy = -r; dy <= r; dy++)
-    for (let dx = -r; dx <= r; dx++) {
-      if (dx * dx + dy * dy > r * r) continue;
-      const nx = dx / r, ny = dy / r, side = phase < 0.5 ? nx : -nx;
-      const lit = side > k * Math.sqrt(1 - ny * ny);
-      const crater = craters.some(([a, b]) => a === dx && b === dy);
-      px(lit ? (crater ? C.blue : C.white) : C.night, cx + dx, cy + dy);
-    }
+  stamp(`moon ${r} ${phase}`, (cx - r) * R, (cy - r) * R, (2 * r + 1) * R, (2 * r + 1) * R, () => {
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        if (dx * dx + dy * dy > r * r) continue;
+        const nx = dx / r, ny = dy / r, side = phase < 0.5 ? nx : -nx;
+        const lit = side > k * Math.sqrt(1 - ny * ny);
+        const crater = craters.some(([a, b]) => a === dx && b === dy);
+        px(lit ? (crater ? C.blue : C.white) : C.night, cx + dx, cy + dy);
+      }
+  });
 }
 
 function drawSun(cx, cy, low) {
   cx = Math.round(cx); cy = Math.round(cy);
   glow(low ? C.amber : C.white, cx, cy, 13, 13, 0);
-  for (let dy = -6; dy <= 6; dy++)
-    for (let dx = -6; dx <= 6; dx++) {
-      const d = dx * dx + dy * dy;
-      if (d <= 36) px(d <= 12 && !low ? C.white : C.amber, cx + dx, cy + dy);
-    }
+  stamp('sun ' + low, (cx - 6) * R, (cy - 6) * R, 13 * R, 13 * R, () => {
+    for (let dy = -6; dy <= 6; dy++)
+      for (let dx = -6; dx <= 6; dx++) {
+        const d = dx * dx + dy * dy;
+        if (d <= 36) px(d <= 12 && !low ? C.white : C.amber, cx + dx, cy + dy);
+      }
+  });
 }
 
 // A plane crosses the sky every 45 seconds with blinking lights
@@ -1851,7 +1907,7 @@ function drawView(b, t, sk) {
   ctx.save();
   ctx.beginPath(); ctx.rect(22 * R, 20 * R, 88 * R, (b - 20) * R); ctx.clip();
   ({ mountain: viewMountain, ice: viewIce, shore: viewShore, village: viewVillage, desert: viewDesert, forest: viewForest })[v](b, t, sk);
-  ctx.restore();
+  ctx.restore(); inkColor = null;
 }
 
 function viewMountain(b, t, sk) {
@@ -2499,13 +2555,16 @@ function drawTank(t) {
   const top = Y + 7, sand = Y + TH - 8; // water surface and sand line, in fine pixels
 
   // water: lighter near the surface, slow light rays drifting through it
-  frect(C.navy, X, top, TW, TH - 7);
-  for (let y = top + 1; y < sand; y++)
-    for (let x = X + 1; x < X + TW - 1; x++) {
-      const k = (y - top) / (sand - top);
-      const ray = (x + y * 0.5 + Math.floor(t * 5)) % 23 < 2 && k < 0.75 && (x + y) % 2 === 0;
-      if (ray || (k < 0.15 && (x + y) % 2 === 0) || (k < 0.45 && (x + 2 * y) % 7 === 0)) frect(C.blue, x, y);
-    }
+  const drift = Math.floor(t * 5) % 23; // the rays repeat every 23 steps, so 23 pictures cover them
+  stamp('water ' + drift, X, top, TW, TH - 7, () => {
+    frect(C.navy, X, top, TW, TH - 7);
+    for (let y = top + 1; y < sand; y++)
+      for (let x = X + 1; x < X + TW - 1; x++) {
+        const k = (y - top) / (sand - top);
+        const ray = (x + y * 0.5 + drift) % 23 < 2 && k < 0.75 && (x + y) % 2 === 0;
+        if (ray || (k < 0.15 && (x + y) % 2 === 0) || (k < 0.45 && (x + 2 * y) % 7 === 0)) frect(C.blue, x, y);
+      }
+  });
   // rippling surface with glints
   for (let x = X + 1; x < X + TW - 1; x++) {
     const y = top + Math.round(Math.sin(t * 3 + x * 0.35) * 0.8);
@@ -2933,7 +2992,7 @@ function draw(t) {
   if (shown('plant')) for (const a of agents) if (a.action === 'water' && a.arrived) // drops from a watering can
     for (let i = 0; i < 3; i++) px(C.blue, PLANT.x + 2 + i * 2, PLANT.pot - 22 + ((now * 18 + i * 5) % 20));
   drawPops();
-  ctx.restore();
+  ctx.restore(); inkColor = null;
 }
 
 let last = 0, acc = 0, now = 0, drawn = 0;
@@ -3016,6 +3075,7 @@ canvas.addEventListener('pointerdown', e => {
 
 // Fit the panel: widen the room up to 21:9; in tall panels the session list fills the space below
 function resize() {
+  inkColor = null; // a new canvas size resets the context
   W = Math.round(Math.min(Math.max(H * innerWidth / innerHeight, SCENE_W), 420));
   canvas.width = W * R;
   canvas.height = H * R;
