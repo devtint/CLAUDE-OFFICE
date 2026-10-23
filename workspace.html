@@ -1527,6 +1527,7 @@ function toggleFull() {
 }
 
 document.addEventListener('fullscreenchange', () => {
+  resize();
   $('sFull').textContent = document.fullscreenElement ? 'LEAVE FULL SCREEN' : 'FULL SCREEN';
 });
 
@@ -3013,7 +3014,9 @@ function resize() {
   const s = Math.min((innerWidth - edge) / W, (innerHeight - edge) / H);
   canvas.style.width = Math.floor(W * s) + 'px';
   canvas.style.height = Math.floor(H * s) + 'px';
-  const spare = innerHeight - Math.floor(H * s);
+  // full screen (F, F11 or the desktop shortcut) shows only the room, centred
+  const full = !!document.fullscreenElement || (innerWidth >= screen.width && innerHeight >= screen.height);
+  const spare = full ? 0 : innerHeight - Math.floor(H * s);
   listEl.style.display = spare > 80 ? 'block' : 'none';
   listEl.style.height = spare + 'px';
   document.body.style.justifyContent = spare > 80 ? 'flex-start' : 'center';

@@ -210,7 +210,7 @@ Keys, for a spare monitor or a small panel:
 
 | Key | What it does |
 |---|---|
-| `F` or double-click the room | Full screen on or off (Esc also leaves). The Claude app's side panel may not allow full screen |
+| `F` or double-click the room | Full screen on or off (Esc also leaves). Full screen shows only the room, without the session list. The Claude app's side panel may not allow full screen |
 | `S` | Opens or closes the settings |
 | `M` | Ambient sound on or off |
 | `[` and `]` | Brightness down or up |
