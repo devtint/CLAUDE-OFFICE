@@ -35,8 +35,15 @@ Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packag
   pushed commit, the cat runs over, jumps on the desk and paws the portal open, waits beside it
   until everyone is through, then hops down. Tap the empty spot on the wall to ask the cat to open it.
 - **The cat** is an orange tabby by default (tuxedo and calico in the settings), with stripes, a
-  collar and bell, blinking eyes and twitching ears. It naps, grooms, watches the fish and purrs
-  when petted.
+  collar and bell, blinking eyes and twitching ears. It naps, grooms and purrs when petted. It also
+  hangs out with the Claudes: it sits on the keyboard of an idle computer (and hops off with a "!" when
+  a Claude needs it), curls up next to a sleeping Claude, follows a Claude around the floor, and paws
+  at the fish tank glass.
+- **The plant** by the window grows with your work: each finished turn (Done) and passing test run
+  counts 1 point, each commit 2 and each push 3. Its size comes from the last 30 days, it flowers on a
+  big day (20 points or more), droops after 3 days without work and wilts after a week. Claudes water
+  it in their free time. Tap it to see today's points. The counts are kept in
+  `~/.claude/office-plant.json`.
 - **Tests, commits and pushes:** a computer's light turns green when its session's tests pass and
   blinks amber when they fail, and the Claude cheers or winces. A push sends the Claude to the
   portal with a parcel ("SENT"). The CODE screen shows the file and the lines changed (+12 -3).
@@ -56,7 +63,7 @@ Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packag
 - Hover or tap a Claude for its card: model, project, state, current step, turn time and context
   use. In a tall side panel the sessions are also listed under the room.
 - Tap things: the cat purrs, the tank gets fed, the cup steams, the window gets a shooting star, the
-  clock switches between 24 and 12 hours.
+  clock switches between 24 and 12 hours, the plant shows its points.
 
 <img src="docs/office.png" width="300" alt="The room in a narrow side panel, with the session list">
 
@@ -124,6 +131,8 @@ What changed since the open-plan office:
   sends nothing about you or your sessions; it can be turned off in the settings or with `?noweather`.
 - Alert sounds moved from the intercom to the settings.
 - The portal now opens only when needed, and the cat opens it. The whiteboard is gone.
+- A plant by the window grows with your work, the cat plays with the Claudes, and there is optional
+  ambient sound in the settings.
 - New in the settings: the cat's coat (orange tabby, tuxedo or calico) and seven views out of the window (city, mountain, ice mountain, shores, village,
   desert, forest, or a random one each day), each with its own wall and matching touches in the room.
 - After adding the hooks, restart Claude Code (or start a new session) so it picks them up.
@@ -206,6 +215,7 @@ Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes
 | Claudes at once | 2, 4, 6 or 8 |
 | Cat | Orange tabby, Tuxedo or Calico |
 | Show subagents | Helpers as small Claudes, or hidden |
+| Ambient sound | Off by default. Rain when it rains in your city (and thunder in storms), soft key clicks while a Claude types, purring when the cat is petted, a meow when it opens the portal. Browsers only play sound after you tap the page once, and it pauses while the page is hidden |
 | Calm mode | No meteors or moth, lighter rain, half the frame rate, for slower computers |
 
 Each view has its own day and night, and the live weather still falls on it:
@@ -234,7 +244,7 @@ geocoding and runs only when you press FIND.
   Settings).
 - `office-hook.py` is the optional Claude Code hook (see Install).
 - `claude-office.py` is a small local server on `127.0.0.1:7788`. It serves the room, `/state`
-  (the sessions as JSON) and `/settings`. It only listens on your own computer, and only one runs at a time.
+  (the sessions as JSON, with today's numbers and the plant) and `/settings`. It only listens on your own computer, and only one runs at a time.
 - `workspace.html` is the room: a 320x180 pixel canvas scaled up crisp, drawn in eight colours with
   a tiny 3D renderer for the agents and the cat. It polls `/state` every 1.5 seconds and turns each
   session's state and tool into what its agent does. All the animation, physics and free-time

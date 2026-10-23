@@ -4,9 +4,12 @@
 #   pythonw claude-office.py           start it, then open http://127.0.0.1:7788
 #   pythonw claude-office.py --stop    stop it
 # Pages: / the room, /?demo the room with made-up sessions. /settings holds what the Pi on the shelf sets.
+# The plant by the window keeps its growth in ~/.claude/office-plant.json.
 # Only one runs at a time: a second start sees the port in use and exits.
+import datetime
 import json
 import os
+import re
 import socket
 import sys
 import threading
@@ -69,7 +72,44 @@ def state(tracker):
                 'streak': s.streak,
             })
         today = day_numbers(tracker.sessions.values())
-    return {'claudes': out, 'ready': tracker.ready, 'today': today, 'hooks': os.path.exists(pet.HOOKS_MARKER)}
+    return {'claudes': out, 'ready': tracker.ready, 'today': today, 'plant': plant(today),
+            'hooks': os.path.exists(pet.HOOKS_MARKER)}
+
+
+PLANT_FILE = os.path.join(pet.HOME, '.claude', 'office-plant.json')
+_plant = {'days': None, 'lock': threading.Lock()}
+
+
+def plant(today):
+    """The plant by the window grows with work: each day's points (a finished turn 1, a passing test
+    run 1, a commit 2, a push 3) are kept for 30 days in ~/.claude/office-plant.json."""
+    with _plant['lock']:
+        days = _plant['days']
+        if days is None:
+            try:
+                with open(PLANT_FILE, encoding='utf-8') as fh:
+                    raw = json.load(fh).get('days', {})
+                days = {k: int(v) for k, v in raw.items()
+                        if re.fullmatch(r'\d{4}-\d\d-\d\d', str(k)) and isinstance(v, (int, float)) and v >= 0}
+            except (OSError, ValueError, AttributeError):
+                days = {}
+            _plant['days'] = days
+        key = time.strftime('%Y-%m-%d')
+        points = today['done'] + today['pass'] + 2 * today['commit'] + 3 * today['push']
+        if points > days.get(key, 0):  # today's sessions can drop out of the tracker, so keep the best count
+            days[key] = points
+            cutoff = time.strftime('%Y-%m-%d', time.localtime(time.time() - 30 * 86400))
+            for k in [k for k in days if k < cutoff]:
+                del days[k]
+            try:
+                with open(PLANT_FILE + '.tmp', 'w', encoding='utf-8') as fh:
+                    json.dump({'days': days}, fh, indent=1)
+                os.replace(PLANT_FILE + '.tmp', PLANT_FILE)
+            except OSError:
+                pass
+        worked = [k for k, v in days.items() if v > 0]
+        idle = (datetime.date.today() - datetime.date.fromisoformat(max(worked))).days if worked else None
+        return {'total': sum(days.values()), 'today': days.get(key, 0), 'idle': idle}
 
 
 def day_numbers(sessions):

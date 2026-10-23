@@ -70,6 +70,7 @@
     <label>Claudes at once <select id="sMax"><option>2</option><option>4</option><option>6</option><option>8</option></select></label>
     <label>Cat <select id="sCat"><option value="orange">Orange tabby</option><option value="tuxedo">Tuxedo</option><option value="calico">Calico</option></select></label>
     <label class="check"><input type="checkbox" id="sHelpers"> Show subagents</label>
+    <label class="check"><input type="checkbox" id="sSound"> Ambient sound (rain, typing, purring)</label>
     <label class="check"><input type="checkbox" id="sCalm"> Calm mode (fewer animations)</label>
     <div class="foot"><span class="note" id="sNote"></span><button id="sReset">RESET</button></div>
   </div>
@@ -366,7 +367,7 @@ const clouds = [
 ];
 const runLines = makeLines(42, 64, 40, 0.15);
 
-const world = { portal: { open: 0, go: false, wait: 0, idle: 0, peek: 0 }, frames: 0, piParty: 0, tapped: false, portalFlare: 0, sessions: 0, ready: true, today: null, mailFlag: 0 };
+const world = { plant: null, portal: { open: 0, go: false, wait: 0, idle: 0, peek: 0 }, frames: 0, piParty: 0, tapped: false, portalFlare: 0, sessions: 0, ready: true, today: null, mailFlag: 0 };
 const steam = [];
 const pops = [];
 const drops = [];
@@ -377,7 +378,7 @@ const cable = makeRope(298, 58, 311, 85, 12, 40);
 
 // Settings, the same as DEFAULTS in tracker.py; loaded from /settings (see the Settings panel below)
 const DEFAULTS = { tz: 'Asia/Bangkok', label: 'BKK', city: 'Bangkok', lat: 13.75, lon: 100.5, weather: true, units: 'C',
-  clock24: true, alerts: false, idle: 10, max: 8, helpers: true, calm: false, view: 'city', cat: 'orange' };
+  clock24: true, alerts: false, idle: 10, max: 8, helpers: true, calm: false, view: 'city', cat: 'orange', sound: false };
 const cfg = Object.assign({}, DEFAULTS);
 
 function pop(str, x, y, color, life = 1.4) {
@@ -575,6 +576,7 @@ function updateStorm(dt, t) {
   while (y < 62) { x += rand(-5, 5); y += rand(4, 8); storm.bolt.push([x, y]); }
   for (const a of agents) if (FREE_ACTIONS.includes(a.action)) startAction(a, 'alarm');
   startleCat();
+  thunder();
 }
 
 function lightning() { return storm.flash > 0.2 || (storm.flash > 0 && storm.flash < 0.1); }
@@ -622,8 +624,10 @@ function updateTank(dt, t) {
 
 // ---------- The cat ----------
 
-const cat = { x: 200, y: 0, vx: 0, vy: 0, base: FLOOR_Y, yaw: 0.7, action: 'sleep', step: '', timer: 8, target: 200, face: 1, moving: false, twitch: 0 };
+const cat = { x: 200, y: 0, vx: 0, vy: 0, base: FLOOR_Y, yaw: 0.7, action: 'sleep', step: '', timer: 8, target: 200, face: 1,
+  moving: false, twitch: 0, purr: 0, spot: 0, buddy: null };
 const CAT_DESK = 128, CAT_UP = PORTAL.x + 9, CAT_SEAT = PORTAL.x + 15; // the desk top, where it jumps up, where it sits
+const catAir = () => cat.y !== 0 || cat.vy !== 0;
 
 function startCat(action, time) {
   cat.action = action;
@@ -632,15 +636,34 @@ function startCat(action, time) {
 }
 
 function petCat() {
-  if (cat.action === 'portal') { if (Math.random() < 0.05) pop('&', cat.x - 1, cat.base - 18, C.amber); return; }
+  cat.purr = 2;
+  if (cat.base !== FLOOR_Y) { if (Math.random() < 0.05) pop('&', cat.x - 1, cat.base - 18, C.amber); return; } // busy up on the desk
   if (cat.action !== 'purr') startCat('purr', 4);
 }
 
 function startleCat() {
-  if (cat.y < 0 || cat.action === 'portal') return;
+  if (cat.y < 0 || cat.base !== FLOOR_Y) return;
   cat.vy = -90;
   pop('!', cat.x - 1, cat.base - 22, C.amber);
   startCat('walk', 3);
+}
+
+// Jumps between the floor and the desk top, landing at x
+function catJump(up, x) {
+  cat.base = up ? CAT_DESK : FLOOR_Y;
+  cat.y = up ? FLOOR_Y - CAT_DESK : CAT_DESK - FLOOR_Y;
+  cat.vy = up ? -160 : -50;
+  cat.vx = (x - cat.x) / 0.71; // both jumps take about 0.71 s
+  cat.face = Math.sign(x - cat.x) || cat.face;
+}
+
+function catRun(x, speed, dt) {
+  const dx = x - cat.x;
+  if (Math.abs(dx) <= 1) return true;
+  cat.face = Math.sign(dx);
+  cat.x += cat.face * Math.min(Math.abs(dx), speed * dt);
+  cat.moving = true;
+  return false;
 }
 
 // The portal only opens when someone is coming or going, and the cat is the one who opens it
@@ -656,65 +679,103 @@ function updatePortal(dt) {
 
 // Someone is coming or going: the cat runs over, jumps on the desk and paws the portal open,
 // then sits beside it until everyone is through and it has closed again
-function catPortal() {
+function catPortal(dt) {
   const P = world.portal;
   switch (cat.step) {
+    case 'leap': catJump(false, cat.x); cat.step = 'run'; break; // up on the desk somewhere else: down first
     case 'run':
-      if (Math.abs(CAT_UP - cat.x) > 1) { cat.face = Math.sign(CAT_UP - cat.x); cat.x += cat.face * Math.min(Math.abs(CAT_UP - cat.x), 40 * STEP); cat.moving = true; }
-      else { cat.step = 'up'; cat.base = CAT_DESK; cat.y = FLOOR_Y - CAT_DESK; cat.vy = -160; cat.vx = (CAT_SEAT - cat.x) / 0.71; cat.face = -1; }
+      if (catRun(CAT_UP, 40, dt)) { cat.step = 'up'; catJump(true, CAT_SEAT); cat.face = -1; }
       break;
     case 'up': cat.step = 'tap'; cat.timer = 0.8; break; // landed on the desk
     case 'tap':
       cat.face = -1;
-      if (cat.timer <= 0) { P.go = true; P.idle = -2; world.portalFlare = 1; cat.step = 'guard'; pop('%', cat.x - 2, cat.base - 20, C.green); }
+      if (cat.timer <= 0) { P.go = true; P.idle = -2; world.portalFlare = 1; cat.step = 'guard'; pop('%', cat.x - 2, cat.base - 20, C.green); meow(); }
       break;
     case 'guard':
       cat.face = -1;
       if (portalWanted() && !P.go) { cat.step = 'tap'; cat.timer = 0.6; }
-      else if (!portalWanted() && P.open === 0) {
-        cat.step = 'down'; cat.base = FLOOR_Y; cat.y = CAT_DESK - FLOOR_Y; cat.vy = -50; cat.vx = (CAT_UP - cat.x) / 0.71; cat.face = 1;
-      }
+      else if (!portalWanted() && P.open === 0) { cat.step = 'down'; catJump(false, CAT_UP); }
       break;
     default: startCat('sit', rand(2, 4)); // back on the floor
   }
 }
 
+// Trips up to the desk: sitting on an idle keyboard, or curling up beside a sleeping Claude
+function catTrip(dt) {
+  const m = monitors.find(mm => mm.x + 27 === cat.spot);
+  const over = cat.action === 'keys' ? !m || !!m.agent
+    : !cat.buddy || !agents.includes(cat.buddy) || cat.buddy.action !== 'sleep';
+  if (cat.base === FLOOR_Y) {
+    if (over) return startCat('sit', rand(2, 4));
+    if (catRun(cat.spot - 6, 20, dt)) { catJump(true, cat.spot); cat.timer = cat.action === 'keys' ? rand(10, 18) : rand(15, 30); }
+    return;
+  }
+  if (cat.action === 'snuggle' && Math.random() < dt * 0.4) pop('Z', cat.x + 3, cat.base - 14, C.white, 2.2);
+  if (over || cat.timer <= 0) {
+    if (over && cat.action === 'keys') pop('!', cat.x - 1, cat.base - 22, C.amber); // someone needs that computer
+    catJump(false, cat.spot + 6);
+    startCat('sit', rand(2, 4));
+  }
+}
+
+// What to do next: mostly cat things, sometimes something with the Claudes
+function nextCat() {
+  const r = Math.random();
+  const keys = monitors.filter(m => !m.agent);
+  const sleepers = agents.filter(a => a.action === 'sleep' && a.level === 'desk' && a.scale > 0.5);
+  const walkers = agents.filter(a => a.level === 'floor' && a.moving);
+  if (r < 0.1 && keys.length) { startCat('keys', 30); cat.spot = pick(keys).x + 27; }
+  else if (r < 0.2 && sleepers.length) {
+    const b = pick(sleepers);
+    startCat('snuggle', 30); cat.buddy = b; cat.spot = Math.round(Math.max(68, Math.min(270, b.x + (b.x > 250 ? -11 : 11))));
+  }
+  else if (r < 0.28 && walkers.length) { startCat('follow', rand(6, 10)); cat.buddy = pick(walkers); }
+  else if (r < 0.5) startCat('walk', 8);
+  else if (r < 0.63) startCat('sit', rand(4, 7));
+  else if (r < 0.83) startCat('sleep', rand(10, 18));
+  else if (r < 0.91) startCat('groom', rand(3, 5));
+  else startCat('watch', rand(6, 10)); // sits under the fish tank, staring, and paws at it
+}
+
 function updateCat(dt, t) {
-  if (cat.y !== 0 || cat.vy !== 0) {
+  if (catAir()) {
     cat.vy += GRAVITY * dt; cat.y += cat.vy * dt; cat.x += cat.vx * dt;
     if (cat.vy > 0 && cat.y >= 0) { cat.y = 0; cat.vy = 0; cat.vx = 0; }
   }
-  const air = cat.y !== 0 || cat.vy !== 0;
+  const air = catAir();
   cat.timer -= dt;
+  cat.purr = Math.max(0, cat.purr - dt);
   cat.moving = false;
   cat.twitch = Math.max(0, cat.twitch - dt);
   if (Math.random() < dt * 0.15) cat.twitch = 0.25; // an ear flicks now and then
   if (!air && portalWanted() && cat.action !== 'portal') {
     if (cat.action === 'sleep') pop('!', cat.x - 1, cat.base - 22, C.amber);
-    cat.action = 'portal'; cat.step = cat.base === CAT_DESK ? 'tap' : 'run'; cat.timer = 0.6;
+    cat.action = 'portal'; cat.timer = 0.6;
+    cat.step = cat.base === FLOOR_Y ? 'run' : Math.abs(cat.x - CAT_SEAT) < 2 ? 'tap' : 'leap';
   }
-  if (cat.action === 'portal') { if (!air) catPortal(); }
+  if (air) { /* mid-jump */ }
+  else if (cat.action === 'portal') catPortal(dt);
+  else if (cat.action === 'keys' || cat.action === 'snuggle') catTrip(dt);
+  else if (cat.base !== FLOOR_Y) catJump(false, cat.x); // anything else happens on the floor
   else {
+    if (cat.action === 'follow') { // trails a Claude around the room
+      const b = cat.buddy;
+      if (!b || !agents.includes(b) || b.level !== 'floor') cat.timer = 0;
+      else catRun(b.x - (b.face || 1) * 12, 18, dt);
+    }
     const goal = cat.action === 'walk' ? cat.target : cat.action === 'watch' ? TANK.x + 16 : null;
-    if (goal !== null) {
-      const dx = goal - cat.x;
-      if (Math.abs(dx) > 1) { cat.face = Math.sign(dx); cat.x += cat.face * 12 * dt; cat.moving = true; }
-      else if (cat.action === 'walk') cat.timer = Math.min(cat.timer, 0.3);
+    if (goal !== null && catRun(goal, 12, dt)) {
+      if (cat.action === 'walk') cat.timer = Math.min(cat.timer, 0.3);
+      else if (Math.random() < dt * 0.3) { cat.vy = -70; tapTank(TANK.x + rand(6, 26)); } // a swipe at the glass
     }
     if (cat.action === 'sleep' && Math.random() < dt * 0.4) pop('Z', cat.x + 3, cat.base - 18, C.white, 2.2);
     if (cat.action === 'purr' && Math.random() < dt * 1.5) pop('&', cat.x + rand(-4, 2), cat.base - 18, C.amber);
-    if (cat.timer <= 0) {
-      const r = Math.random();
-      if (r < 0.35) startCat('walk', 8);
-      else if (r < 0.55) startCat('sit', rand(4, 7));
-      else if (r < 0.8) startCat('sleep', rand(10, 18));
-      else if (r < 0.9) startCat('groom', rand(3, 5));
-      else startCat('watch', rand(6, 10)); // sits under the fish tank, staring
-    }
+    if (cat.timer <= 0) nextCat();
   }
   const target = cat.moving ? cat.face * Math.PI / 2
     : cat.action === 'portal' ? (cat.step === 'tap' ? -Math.PI / 2 : -0.7)
-    : cat.action === 'watch' ? Math.PI : cat.action === 'sleep' ? cat.face * 0.8 : cat.face * 0.5;
+    : cat.action === 'keys' ? 0.3
+    : cat.action === 'watch' ? Math.PI : cat.action === 'sleep' || cat.action === 'snuggle' ? cat.face * 0.8 : cat.face * 0.5;
   cat.yaw += angleDiff(target, cat.yaw) * Math.min(1, dt * 6);
 }
 
@@ -822,7 +883,7 @@ function activityOf(c) {
 }
 
 const AT_COMPUTER = ['code', 'run', 'fix'];
-const FREE_ACTIONS = ['sit', 'walk', 'hop', 'dance', 'look', 'gaze', 'fish', 'cat', 'tea', 'stretch', 'book', 'highfive', 'chat', 'sleep', 'think'];
+const FREE_ACTIONS = ['sit', 'walk', 'hop', 'dance', 'look', 'gaze', 'fish', 'cat', 'water', 'tea', 'stretch', 'book', 'highfive', 'chat', 'sleep', 'think'];
 const DESK_ONLY = ['sit', 'sleep', 'gaze', 'fish', 'tea', 'book', 'work', 'busy', 'read', 'browse', 'summon', 'calendar', 'ship', 'leave', 'highfive'];
 
 function applyState(a, c) {
@@ -876,6 +937,7 @@ function freeMood(a) {
   const busyWith = act => agents.some(o => o !== a && o.action === act);
   const moods = ['sit', 'walk', 'hop', 'dance', 'look', 'gaze', 'fish', 'fish', 'tea', 'stretch', 'book'];
   if (!busyWith('cat')) moods.push('cat', 'cat');
+  if (!busyWith('water')) moods.push('water', ...(plantLook().droop ? ['water', 'water'] : []));
   if (wet()) moods.push('gaze', 'gaze'); // rain is worth watching
   if (findBuddy(a)) moods.push('highfive');
   if (agents.some(o => o !== a && o.level === a.level && o.info.project === a.info.project && FREE_ACTIONS.includes(o.action)))
@@ -922,6 +984,7 @@ function startAction(a, name) {
     case 'tea':     a.target = CUP_X - 6; a.timer = rand(5, 7); break;
     case 'book':    a.target = SHELF_SPOT + rand(-3, 3); a.timer = rand(6, 9); break;
     case 'cat':     setLevel(a, 'floor'); a.timer = 14; break;
+    case 'water':   setLevel(a, 'floor'); a.target = PLANT.x + 11; a.timer = 8; break; // waters the plant
     case 'highfive': {
       const b = findBuddy(a);
       if (!b) { a.action = 'look'; a.timer = 2; break; }
@@ -1062,9 +1125,13 @@ function updateAgent(a, dt, t) {
       a.arrived = true;
       if (Math.random() < dt * 0.4) { if (Math.random() < 0.5) feedFish(); else tapTank(a.x); a.happy = 1; }
       break;
+    case 'water':
+      if (a.level !== 'floor') break;
+      if (walkTo(a, a.target, 16, dt)) { a.arrived = true; a.face = -1; }
+      break;
     case 'cat': {
       if (a.level !== 'floor') break;
-      if (cat.action === 'portal') { a.timer = Math.min(a.timer, 1); break; } // the cat has a job to do
+      if (cat.base !== FLOOR_Y || cat.action === 'portal') { a.timer = Math.min(a.timer, 1); break; } // the cat is busy
       const side = a.x < cat.x ? -1 : 1;
       if (!walkTo(a, cat.x + side * 13, 16, dt)) break;
       a.arrived = true;
@@ -1134,6 +1201,7 @@ function yawTarget(a, t) {
     case 'tea':   return a.arrived ? 1.2 : walking;
     case 'gaze':  return a.arrived ? -2.6 : walking; // back to us, looking out of the window
     case 'cat':   return a.arrived ? a.face * 1.3 : walking;
+    case 'water': return a.arrived ? -1.3 : walking;
     case 'highfive': case 'buddy': return a.face * 1.2;
     case 'think': return Math.sin(t * 0.8 + a.x) * 0.6;
     case 'look':  return Math.sin(t * 1.6 + a.x) * 1.2;
@@ -1219,11 +1287,12 @@ function demoState() {
 const demoToday = () => ({ done: 12, commit: 5, push: 2, pass: 9, fail: 1, top: '#D97757' });
 
 async function poll() {
-  if (params.has('demo')) { world.today = demoToday(); sync(demoState()); setTimeout(poll, 1500); return; }
+  if (params.has('demo')) { world.today = demoToday(); world.plant = { total: 420, today: 46, idle: 0 }; sync(demoState()); setTimeout(poll, 1500); return; }
   try {
     const d = await (await fetch('/state', { cache: 'no-store' })).json();
     world.ready = d.ready !== false;
     world.today = d.today || null;
+    world.plant = d.plant || null;
     sync(d.claudes || []);
   } catch (e) {
     // server stopped: the desktop app window (opened with ?app) closes itself; elsewhere keep the last picture
@@ -1288,6 +1357,7 @@ function fillPanel() {
   $('sCalm').checked = cfg.calm;
   $('sView').value = cfg.view;
   $('sCat').value = cfg.cat;
+  $('sSound').checked = cfg.sound;
   $('sResults').replaceChildren();
   $('sNote').textContent = params.has('noweather') ? '?noweather is on' : '';
 }
@@ -1345,6 +1415,7 @@ function bindSettings() {
   on('sCalm', 'change', e => { cfg.calm = e.checked; });
   on('sView', 'change', e => { cfg.view = e.value; });
   on('sCat', 'change', e => { cfg.cat = e.value; });
+  on('sSound', 'change', e => { cfg.sound = e.checked; soundOn(); });
   $('sFind').addEventListener('click', findCity);
   $('sCity').addEventListener('keydown', e => { if (e.key === 'Enter') findCity(); });
   $('sReset').addEventListener('click', () => { Object.assign(cfg, DEFAULTS); fillPanel(); fetchWeather(); saveSettings(); });
@@ -1905,6 +1976,133 @@ function drawRug() {
   for (let y = 157; y < 173; y += 2) { px(C.white, 111, y); px(C.white, 232, y); }
 }
 
+// ---------- The plant by the window: it grows with finished turns, passing tests, commits and pushes ----------
+
+const PLANT = { x: 30, pot: 152 };
+
+// How the plant looks from its points: size from the last 30 days, flowers on a big day, droops when left alone
+function plantLook() {
+  const p = world.plant || { total: 0, today: 0, idle: null };
+  return {
+    stage: Math.min(10, Math.floor(Math.sqrt(p.total / 10))),
+    flowers: Math.min(4, Math.floor(p.today / 20)),
+    droop: p.idle === null ? 0 : p.idle >= 7 ? 2 : p.idle >= 3 ? 1 : 0
+  };
+}
+
+function drawPlant(t) {
+  const { stage, flowers, droop } = plantLook(), { x, pot } = PLANT;
+  const h = 6 + stage * 4;
+  const leaf = droop === 2 ? ['#9a7a3c', '#6e5428'] : droop === 1 ? ['#8a9a48', '#5e6e34'] : [V.leaf[0], V.pine[0]];
+  const sway = k => Math.sin(t * 0.8) * k / h * 1.5 + (droop ? k * k / h / h * 3 * droop : 0); // leans over when thirsty
+  for (let k = 0; k < h; k++) px(V.pine[0], x + Math.round(sway(k)), pot - 1 - k);
+  for (let k = 4; k < h; k += 4) { // leaves in pairs up the stem
+    const sx = x + Math.round(sway(k)), y = pot - 1 - k, side = (k / 4) % 2 ? 1 : -1, dy = droop ? 1 : 0;
+    const big = k > h / 3 && stage > 3 ? 1 : 0, at = (dx, yy, w, c) => rect(c, side > 0 ? sx + dx : sx - dx - w + 1, yy, w, 1);
+    at(1, y - 1 + dy, 3 + big, leaf[0]);
+    at(1, y + dy, 5 + big, leaf[0]);
+    at(2, y + 1 + dy, 3 + big, leaf[1]);
+    if (stage > 5) { at(-3, y + 2 + dy, 3, leaf[1]); at(-4, y + 3 + dy, 2, leaf[0]); } // a smaller leaf on the other side
+  }
+  const tx = x + Math.round(sway(h)), ty = pot - h;
+  rect(leaf[0], tx - 1, ty - 1, 3, 1);
+  for (let i = 0; i < flowers; i++) { // blossoms on a busy day
+    const k = i === 0 ? h : h - 4 - i * 6, fx = x + Math.round(sway(k)) + (i % 2 ? 4 : -4) * (i > 0), fy = pot - k - 2;
+    const c = [C.amber, C.white, '#f09aa6', C.amber][i];
+    px(c, fx - 1, fy); px(c, fx + 1, fy); px(c, fx, fy - 1); px(c, fx, fy + 1); px(C.amber, fx, fy);
+  }
+  // the pot
+  rect('#b0573c', x - 6, pot, 13, 2);
+  rect('#8a4430', x - 5, pot + 2, 11, 6);
+  rect('#b0573c', x - 4, pot + 3, 1, 4);
+  rect(C.night, x - 5, pot + 8, 11, 1);
+}
+
+function showPlant(e) {
+  const p = world.plant || { total: 0, today: 0 }, d = world.today;
+  card.replaceChildren(el('div', 'name', 'The plant'),
+    el('div', 'state', 'Grows with finished turns, passing tests, commits and pushes'),
+    el('div', 'step', `Today ${p.today} points` + (d ? ` (${d.done} done, ${d.pass} tests, ${d.commit} commits, ${d.push} pushes)` : '')
+      + `  |  30 days ${p.total}` + (p.idle >= 3 ? `  |  thirsty: ${p.idle} days without work` : '')));
+  card.style.display = 'block';
+  card.style.left = Math.min(e.clientX + 12, innerWidth - 270) + 'px';
+  card.style.top = Math.min(e.clientY + 14, innerHeight - 90) + 'px';
+  setTimeout(() => { card.style.display = 'none'; }, 4000);
+}
+
+// ---------- Ambient sound (opt-in in the settings): rain, typing, purring, made on the fly ----------
+// Its own audio context, so hiding the page can pause it without silencing the alert chime.
+
+const sound = { ac: null, rain: null, purr: null, buf: null, next: 0 };
+
+function soundOn() {
+  if (!cfg.sound) return null;
+  try { sound.ac = sound.ac || new AudioContext(); } catch (e) { return null; }
+  if (sound.ac.state === 'suspended' && !document.hidden) sound.ac.resume().catch(() => {});
+  return sound.ac;
+}
+
+function startBeds(ac) {
+  sound.buf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
+  const data = sound.buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  const bed = (filter, freq, q) => { // looping noise through a filter, silent until turned up
+    const src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+    src.buffer = sound.buf; src.loop = true;
+    f.type = filter; f.frequency.value = freq; f.Q.value = q; g.gain.value = 0;
+    src.connect(f).connect(g).connect(ac.destination); src.start();
+    return g;
+  };
+  sound.rain = bed('bandpass', 1400, 0.6);
+  const o = ac.createOscillator(), lp = ac.createBiquadFilter(), g = ac.createGain(); // purr: a low pulsing hum
+  o.type = 'sawtooth'; o.frequency.value = 26; lp.type = 'lowpass'; lp.frequency.value = 180; g.gain.value = 0;
+  o.connect(lp).connect(g).connect(ac.destination); o.start();
+  sound.purr = g;
+}
+
+// A short burst of filtered noise: a key click, or thunder rolling
+function burst(ac, at, freq, type, peak, length) {
+  const src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+  src.buffer = sound.buf; f.type = type; f.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(peak, at + Math.min(0.3, length / 8));
+  g.gain.exponentialRampToValueAtTime(0.0001, at + length);
+  src.connect(f).connect(g).connect(ac.destination);
+  src.start(at, Math.random()); src.stop(at + length + 0.05);
+}
+
+function thunder() { const ac = sound.ac; if (cfg.sound && ac && sound.buf) burst(ac, ac.currentTime + rand(0.3, 1.2), 110, 'lowpass', 0.3, 2.8); }
+
+function meow() {
+  const ac = sound.ac;
+  if (!cfg.sound || !ac || ac.state !== 'running') return;
+  const o = ac.createOscillator(), g = ac.createGain(), t0 = ac.currentTime;
+  o.type = 'triangle';
+  o.frequency.setValueAtTime(520, t0); o.frequency.linearRampToValueAtTime(820, t0 + 0.15); o.frequency.linearRampToValueAtTime(430, t0 + 0.5);
+  g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.04, t0 + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.55);
+  o.connect(g).connect(ac.destination); o.start(t0); o.stop(t0 + 0.6);
+}
+
+function updateSound(dt) {
+  const ac = sound.ac;
+  if (!ac) return;
+  if (!cfg.sound) { if (ac.state === 'running') ac.suspend(); return; }
+  if (ac.state !== 'running') return;
+  if (!sound.rain) startBeds(ac);
+  const t = ac.currentTime;
+  const rain = weather.kind === 'storm' ? 0.12 : weather.kind === 'rain' ? 0.05 + Math.min(0.05, weather.precip * 0.01) : 0;
+  sound.rain.gain.setTargetAtTime(rain, t, 0.8);
+  sound.purr.gain.setTargetAtTime(cat.purr > 0 || cat.action === 'purr' ? 0.07 : 0, t, 0.15);
+  const typists = agents.filter(a => a.action === 'work' && a.arrived && a.task && a.task !== 'done').length;
+  sound.next -= dt;
+  if (typists && sound.next <= 0) { burst(ac, t, 3200, 'highpass', 0.03, 0.03); sound.next = rand(0.07, 0.25) / typists; }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (!sound.ac) return;
+  if (document.hidden) sound.ac.suspend(); else if (cfg.sound) sound.ac.resume().catch(() => {});
+});
+
 // ---------- Wall clock with the room's time and weather ----------
 
 function drawClock() {
@@ -2286,10 +2484,10 @@ const coat = () => COATS[cfg.cat] || COATS.orange;
 
 function drawCat(t) {
   const c = coat(), o = { x: cat.x, y: cat.base + cat.y }, yaw = cat.yaw;
-  const sleeping = cat.action === 'sleep';
+  const sleeping = cat.action === 'sleep' || (cat.action === 'snuggle' && cat.base === CAT_DESK && !catAir());
   const sitting = !cat.moving && !sleeping;
   const pawing = cat.action === 'portal' && cat.step === 'tap';
-  const breathe = sleeping || cat.action === 'purr' ? (Math.sin(t * 3) + 1) * 0.25 : 0;
+  const breathe = sleeping || cat.purr > 0 || cat.action === 'purr' ? (Math.sin(t * 3) + 1) * 0.25 : 0;
   if (cat.y > -3) rect(C.wood, Math.round(cat.x) - 7, cat.base, 14, 1);
   const fur = part => (face, u, v, fx, fy, b) => shade(FUR[c.mark(part, face, u, v)], b, fx, fy);
   const parts = [];
@@ -2548,6 +2746,7 @@ function update(dt, t) {
   updateTank(dt, t);
   updateCat(dt, t);
   updatePortal(dt);
+  updateSound(dt);
   for (const a of agents) updateAgent(a, dt, t);
   for (let i = agents.length - 1; i >= 0; i--) if (agents[i].gone) { release(agents[i]); agents.splice(i, 1); }
   updateRope(cable, dt);
@@ -2573,6 +2772,7 @@ function draw(t) {
   drawStats();
   drawShelf(t);
   drawTouches(t, sk);
+  drawPlant(t);
   drawPortal(t);
   drawDesk();
   if (!cfg.calm && world.portal.open > 0.5) drawMoth(t);
@@ -2586,6 +2786,8 @@ function draw(t) {
   drawMailbox();
   drawCat(t);
   for (const a of agents) if (a.level === 'floor' && a.scale > 0.05) drawAgent(a, t);
+  for (const a of agents) if (a.action === 'water' && a.arrived) // drops from a watering can
+    for (let i = 0; i < 3; i++) px(C.blue, PLANT.x + 2 + i * 2, PLANT.pot - 22 + ((now * 18 + i * 5) % 20));
   drawPops();
   ctx.restore();
 }
@@ -2637,6 +2839,7 @@ canvas.addEventListener('pointerdown', e => {
   const [x, y] = scenePoint(e);
   const hit = (x0, y0, x1, y1) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
   world.tapped = true;
+  soundOn();
   const a = agentAt(x, y);
   if (a) {
     showCard(a, e);
@@ -2652,6 +2855,7 @@ canvas.addEventListener('pointerdown', e => {
   }
   else if (Math.abs(x - cat.x) < 9 && y > cat.base - 16 && y < cat.base + 3) { if (cat.action === 'sleep') pop('!', cat.x - 1, cat.base - 22, C.amber); petCat(); }
   else if (hit(TANK.x - 1, TANK.y, TANK.x + TANK.w, TANK.y + TANK.h)) { feedFish(); tapTank(x); }
+  else if (hit(PLANT.x - 7, PLANT.pot - 6 - plantLook().stage * 4, PLANT.x + 7, PLANT.pot + 9)) showPlant(e);
   else if (hit(PORTAL.x - PORTAL.rx, PORTAL.y - PORTAL.ry, PORTAL.x + PORTAL.rx, PORTAL.y + PORTAL.ry)) {
     if (world.portal.open > 0) world.portalFlare = 1; else world.portal.peek = 9; // asks the cat to open it
   }

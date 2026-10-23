@@ -93,6 +93,7 @@ DEFAULTS = {
     'calm': False,         # fewer animations, for slower computers
     'view': 'city',        # what the window looks out on, with matching touches in the room
     'cat': 'orange',       # the cat's coat: orange tabby, tuxedo or calico
+    'sound': False,        # ambient sound: rain, typing, purring
 }
 VIEWS = ('city', 'mountain', 'ice', 'shore', 'village', 'desert', 'forest', 'random')
 CHOICES = {'units': ('C', 'F'), 'idle': (5, 10, 30, 60), 'max': (2, 4, 6, 8), 'view': VIEWS, 'cat': ('orange', 'tuxedo', 'calico')}
