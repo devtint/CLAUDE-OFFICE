@@ -108,7 +108,8 @@
 // and the window. When the session ends it leaves through the portal.
 // The page polls /state (see claude-office.py). Everything else runs here, so it costs no tokens.
 // URL options: ?demo (made-up sessions), ?hour=21 and ?weather=rain (preview the sky), ?noweather, ?view=shore,
-// ?wall=forest, ?date=10-31 (the decorations of another day), ?canvas=gpu (draw with the graphics card).
+// ?wall=forest, ?date=10-31 (the decorations of another day), ?canvas=gpu (draw with the graphics card),
+// ?everyframe (wake on every screen refresh).
 // Settings (time zone, weather city, units, view, alerts, room): tap the Raspberry Pi on the shelf.
 
 // Internal resolution: the room is laid out on 320x180 and widens to match wide screens.
@@ -3272,14 +3273,24 @@ function restful(t) {
 }
 addEventListener('pointerdown', () => { touchedAt = now; });
 addEventListener('keydown', () => { touchedAt = now; });
+// Asking for every screen refresh and skipping most of them still wakes the page and the browser's
+// graphics 60 times a second; so the page sleeps until just before its next frame is due, then asks
+// for the refresh that lines it up with the screen (at 10 fps, 20 wake-ups a second instead of 60).
+// ?everyframe asks for every refresh as before, to compare.
+const EVERY_FRAME = params.has('everyframe');
+function nextFrame(wait) {
+  if (wait > 0.02 && !EVERY_FRAME) setTimeout(() => requestAnimationFrame(frame), (wait - 0.012) * 1000);
+  else requestAnimationFrame(frame);
+}
+
 // The frame rate setting (30 by default) skips screen refreshes, so a 60, 120 or 144 Hz monitor costs
 // the same; calm mode keeps it at 20 or lower, resting at 10. Skipped refreshes do no work at all.
 function frame(ms) {
-  requestAnimationFrame(frame);
   const t = ms / 1000;
   const gap = 1 / Math.min(calm() ? Math.min(cfg.fps, 20) : cfg.fps, restful(t) ? 10 : 60);
-  if (t - drawn < gap - 0.004) return; // a little early is fine: refreshes never land exactly on time
-  drawn = t - drawn < 2 * gap ? drawn + gap * Math.floor((t - drawn) / gap + 0.1) : t;
+  if (t - drawn < gap - 0.004) return nextFrame(drawn + gap - t); // a little early is fine: refreshes never land exactly on time
+  drawn = t; // frames start on screen refreshes, so the next one is due a whole number of refreshes later
+  nextFrame(gap);
   now = t;
   acc += Math.min(0.1, now - last);
   last = now;

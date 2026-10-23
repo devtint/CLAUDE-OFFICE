@@ -1,7 +1,7 @@
 # Makes the two desktop shortcuts for the Claude office: "Claude Office" (start and open) and
 # "Claude Office Off" (stop). Works out every path when it runs, so it suits any computer.
 #   python install.py               make the shortcuts (Windows .lnk, macOS .app, Linux .desktop)
-#   python install.py --uninstall   remove them
+#   python install.py --uninstall   remove them (and the full screen window's browser profile)
 #   python install.py --hooks       add the office hooks to Claude Code (exact "needs you" and "done")
 #   python install.py --uninstall-hooks   remove the hooks again
 # Run it again after moving this folder.
@@ -187,6 +187,8 @@ def main():
         mac(folder, remove)
     else:
         linux(folder, remove)
+    if remove:  # the small browser profile the full screen shortcut uses, if it was ever made
+        shutil.rmtree(os.path.join(os.path.expanduser('~'), '.claude', 'office-browser'), ignore_errors=True)
     print('removed the shortcuts' if remove else 'done: double-click "Claude Office" on the desktop')
 
 

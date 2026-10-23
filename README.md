@@ -152,6 +152,9 @@ What changed since the open-plan office:
 - The room is drawn on the processor instead of the graphics card, which measured lower in total on
   Windows (about 37% of one core instead of 43% with five busy Claudes, half the graphics load).
   `?canvas=gpu` draws the old way.
+- At 10, 15 and 20 fps the page sleeps between frames instead of waking on every screen refresh
+  (resting: 20 wake-ups a second instead of 60). `install.py --uninstall` also removes the full
+  screen window's browser profile.
 - Seasons and holidays: Halloween, Christmas, New Year and Valentine's Day decorations, and petals
   or leaves outside the window in spring and autumn.
 - The wall can be picked separately from the view, and the ambient sound has a volume.
@@ -250,7 +253,7 @@ Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes
 | Brightness | 30% to 100%. Darkens only the office page (a page cannot change the screen's own brightness); on an OLED darker pixels also wear less |
 | Pixel shift | On by default. Every two minutes the whole room moves 2 screen pixels along a small loop, too little to notice, so the still edges (window, shelf, clock) do not wear the same pixels of an OLED all day |
 | Keep the screen awake | Off by default. Stops the screen from sleeping while the office is showing, for a dedicated monitor. Works in Chrome, Edge and other browsers that support it |
-| Desktop shortcut opens in full screen | The **Claude Office** shortcut opens the office full screen. That window uses its own small browser profile in `~/.claude/office-browser`, because a browser that is already open ignores the full screen request otherwise |
+| Desktop shortcut opens in full screen | The **Claude Office** shortcut opens the office full screen. That window uses its own small browser profile in `~/.claude/office-browser` (about 30 MB, removed by `install.py --uninstall`), because a browser that is already open ignores the full screen request otherwise |
 | Full screen | A button for the same thing as the `F` key |
 | Alerts | A soft chime and a desktop notification when a Claude needs you |
 | Leave after idle | How long a quiet session stays in the room: 5, 10, 30 or 60 minutes |
