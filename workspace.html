@@ -108,7 +108,7 @@
 // and the window. When the session ends it leaves through the portal.
 // The page polls /state (see claude-office.py). Everything else runs here, so it costs no tokens.
 // URL options: ?demo (made-up sessions), ?hour=21 and ?weather=rain (preview the sky), ?noweather, ?view=shore,
-// ?wall=forest, ?date=10-31 (the decorations of another day), ?canvas=cpu (draw without the graphics card).
+// ?wall=forest, ?date=10-31 (the decorations of another day), ?canvas=gpu (draw with the graphics card).
 // Settings (time zone, weather city, units, view, alerts, room): tap the Raspberry Pi on the shelf.
 
 // Internal resolution: the room is laid out on 320x180 and widens to match wide screens.
@@ -132,9 +132,10 @@ const STEP = 1 / 60; // fixed physics step
 const params = new URLSearchParams(location.search);
 
 const canvas = document.getElementById('scene');
-// ?canvas=cpu draws on the processor instead of the graphics card (willReadFrequently asks the browser
-// for that), to compare which costs less on a given computer
-const CANVAS_OPTS = params.get('canvas') === 'cpu' ? { willReadFrequently: true } : {};
+// The room is drawn on the processor (willReadFrequently asks the browser for that): sending about a
+// thousand tiny fills a frame to the graphics card cost more. Measured in Brave on Windows, 37% of a
+// core instead of 43%, with half the load on the graphics process. ?canvas=gpu draws the old way.
+const CANVAS_OPTS = params.get('canvas') === 'gpu' ? {} : { willReadFrequently: true };
 let ctx = canvas.getContext('2d', { alpha: false, ...CANVAS_OPTS }); // the room covers the whole canvas; stamp() swaps it
 const listEl = document.getElementById('list');
 const card = document.getElementById('card');
@@ -199,14 +200,14 @@ function blob(color, cx, y, widths, dither = false) {
 // water) are painted once into a small canvas and then drawn as one image. key must name everything
 // the picture depends on; the box (fx, fy, fw, fh) is in fine pixels and must hold all of it.
 const stamps = new Map();
-function stamp(key, fx, fy, fw, fh, paint) {
+function stamp(key, fx, fy, fw, fh, paint, opaque = false) {
   let img = stamps.get(key);
   if (img) stamps.delete(key); // refresh its place: the oldest unused ones go first
   else {
     img = document.createElement('canvas');
     img.width = Math.max(1, Math.ceil(fw)); img.height = Math.max(1, Math.ceil(fh));
     const main = ctx;
-    ctx = img.getContext('2d', CANVAS_OPTS);
+    ctx = img.getContext('2d', { ...CANVAS_OPTS, alpha: !opaque }); // an opaque picture is copied, not blended
     ctx.translate(-fx, -fy);
     try { paint(); } finally { ctx = main; }
     if (stamps.size >= 200) stamps.delete(stamps.keys().next().value);
@@ -1713,7 +1714,7 @@ const wallLight = () => WALLS[currentWall()][2];
 // The wall and floor never move, so each view's wall is painted once (again when the width changes)
 function drawRoom() {
   const v = currentWall();
-  stamp(`room ${v} ${W}`, 0, 0, W * R, H * R, () => paintRoom(v));
+  stamp(`room ${v} ${W}`, 0, 0, W * R, H * R, () => paintRoom(v), true);
 }
 
 function paintRoom(v) {

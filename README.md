@@ -149,6 +149,9 @@ What changed since the open-plan office:
 - Fixes from testing on Windows: saving only some settings keeps the rest, Claudes come out of the
   portal one at a time so their names do not pile up, the calendar follows `?date=`, the tab icon
   loads, and rain and lines take a third of the fills they did.
+- The room is drawn on the processor instead of the graphics card, which measured lower in total on
+  Windows (about 37% of one core instead of 43% with five busy Claudes, half the graphics load).
+  `?canvas=gpu` draws the old way.
 - Seasons and holidays: Halloween, Christmas, New Year and Valentine's Day decorations, and petals
   or leaves outside the window in spring and autumn.
 - The wall can be picked separately from the view, and the ambient sound has a volume.
