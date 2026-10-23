@@ -48,7 +48,8 @@ Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packag
 - **A live window:** the clock, sun, moon (in its real phase), stars and city lights follow the
   room's time zone (Bangkok unless you change it), and the sky follows the live weather of the
   room's city: rain, storms with lightning, fog and clouds.
-- **Settings:** tap the Raspberry Pi on the shelf (the one with the little gear). See Settings below.
+- **Settings:** tap the Raspberry Pi on the shelf (the one with the little gear) to change the time
+  zone, weather city, the view out of the window and more. See Settings below.
 - Hover or tap a Claude for its card: model, project, state, current step, turn time and context
   use. In a tall side panel the sessions are also listed under the room.
 - Tap things: the cat purrs, the tank gets fed, the cup steams, the window gets a shooting star, the
@@ -109,7 +110,7 @@ https://github.com/devtint/CLAUDE-OFFICE
    app, open http://127.0.0.1:7788 in the built-in browser panel.
 8. Tell me it is updated, that "start the office" and "stop the office" work as before, that
    http://127.0.0.1:7788/?demo shows made-up sessions to try it, and that tapping the Raspberry Pi
-   on the shelf opens the settings (time zone, weather city, units, alerts and more).
+   on the shelf opens the settings (time zone, weather city, units, the window view, alerts and more).
 ```
 
 What changed since the open-plan office:
@@ -119,6 +120,8 @@ What changed since the open-plan office:
   another time zone and city. The page asks Open-Meteo for that city's weather every 10 minutes and
   sends nothing about you or your sessions; it can be turned off in the settings or with `?noweather`.
 - Alert sounds moved from the intercom to the settings.
+- New in the settings: seven views out of the window (city, mountain, ice mountain, shores, village,
+  desert, forest, or a random one each day), each with matching touches in the room.
 - After adding the hooks, restart Claude Code (or start a new session) so it picks them up.
 
 ## Install
@@ -193,11 +196,26 @@ Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes
 | Live weather | Turns the weather request on or off |
 | City | Type a city and press FIND, then pick it. Sets the weather, time zone and label |
 | Units | Celsius or Fahrenheit |
+| View | What the window looks out on: City, Mountain, Ice Mountain, Shores, Village, Desert or Forest, or Random each day. Each one also changes a few things in the room (see below) |
 | Alerts | A soft chime and a desktop notification when a Claude needs you |
 | Leave after idle | How long a quiet session stays in the room: 5, 10, 30 or 60 minutes |
 | Claudes at once | 2, 4, 6 or 8 |
 | Show subagents | Helpers as small Claudes, or hidden |
 | Calm mode | No meteors or moth, lighter rain, half the frame rate, for slower computers |
+
+Each view has its own day and night, and the live weather still falls on it:
+
+| View | Outside | In the room |
+|---|---|---|
+| City | Skyline, office lights going off late at night | A cactus on the sill |
+| Mountain | Snowy peaks, pines, a cabin with smoke and a lit window | Skis and poles on the wall, a hanging lantern that glows at night, a pine sapling |
+| Ice Mountain | Icy peaks over a frozen lake, an aurora on clear nights | Frost in the window corners and on the wall, skates on a nail, a snow globe |
+| Shores | Waves, a sailboat, a lighthouse beam at night, moonlight on the water | A life ring, a fishing net with a starfish, a striped beach towel, a seashell |
+| Village | Fields, a windmill, houses with chimney smoke and lights, a lamp post | A flower wreath, a woven rug, flowers on the sill |
+| Desert | Dunes and cacti, far more stars at night | A sun hat, a patterned rug, two cacti |
+| Forest | Layered pines, birds by day, fireflies at night | Ivy trailing from the window and shelf, a fern |
+
+Add `?view=shore` (or any view) to the address to preview one without saving it.
 
 They are saved in `~/.claude/office-settings.json`, so the desktop window, the side panel and the
 tracker all share them. RESET goes back to the defaults. The city search uses Open-Meteo's free

@@ -91,8 +91,10 @@ DEFAULTS = {
     'max': 8,              # Claudes in the room at once
     'helpers': True,       # show subagents as small Claudes
     'calm': False,         # fewer animations, for slower computers
+    'view': 'city',        # what the window looks out on, with matching touches in the room
 }
-CHOICES = {'units': ('C', 'F'), 'idle': (5, 10, 30, 60), 'max': (2, 4, 6, 8)}
+VIEWS = ('city', 'mountain', 'ice', 'shore', 'village', 'desert', 'forest', 'random')
+CHOICES = {'units': ('C', 'F'), 'idle': (5, 10, 30, 60), 'max': (2, 4, 6, 8), 'view': VIEWS}
 _settings = {'mtime': None, 'data': dict(DEFAULTS)}
 
 
