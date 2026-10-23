@@ -1333,10 +1333,53 @@ function bodyCovered(t, s) {
   return clouds.some(cl => Math.abs(22 + cloudX(cl, t) - s.body.x) < 9 && Math.abs(cl.y - s.body.y) < 8);
 }
 
+// Each view has its own wall: [base, lines, light], where light also tints the monitor and portal glow
+const WALLS = {
+  city:     [C.night,   C.navy,    C.navy],
+  mountain: ['#2a1a11', '#170e09', '#3d2718'],
+  ice:      ['#172748', '#26406a', '#2c4a78'],
+  shore:    ['#163242', '#0e2230', '#22495c'],
+  village:  ['#2c2322', '#3f2a1c', '#3a2f2c'],
+  desert:   ['#36231a', '#4b3224', '#4b3224'],
+  forest:   ['#13221a', '#0a130e', '#22382a']
+};
+const wallLight = () => WALLS[currentView()][2];
+
 function drawRoom() {
-  rect(C.night, 0, 0, W, H);
-  for (let x = 6; x < W; x += 24) rect(C.navy, x, 0, 1, 150); // wall panels
-  if (currentView() === 'ice') for (let x = 6; x < W; x += 24) for (let y = 0; y < 150; y += 3) px(C.blue, x, y); // frosted in the cold
+  const v = currentView(), [base, lines, light] = WALLS[v];
+  rect(base, 0, 0, W, H);
+  if (v === 'city') for (let x = 6; x < W; x += 24) rect(lines, x, 0, 1, 150); // wall panels
+  else if (v === 'mountain') for (let y = 0; y < 150; y += 8) { // stacked logs with knots
+    rect(light, 0, y, W, 1); rect(lines, 0, y + 7, W, 1);
+    for (let x = (y * 7) % 37; x < W; x += 61) { px(lines, x, y + 3); px(lines, x + 1, y + 4); }
+  }
+  else if (v === 'ice') for (let y = 0; y < 150; y += 10) { // blocks of ice with a glint here and there
+    rect(lines, 0, y, W, 1);
+    for (let x = (y / 10) % 2 * 12; x < W; x += 24) {
+      rect(lines, x, y, 1, 10);
+      if (hash(x * 3 + y) > 0.6) { px(light, x + 3, y + 2); px(light, x + 4, y + 2); px(light, x + 3, y + 3); }
+    }
+  }
+  else if (v === 'shore') for (let x = 0; x < W; x += 10) { // painted planks, nailed top and bottom
+    rect(lines, x, 0, 1, 150); rect(light, x + 1, 0, 1, 150);
+    px(light, x + 5, 4); px(light, x + 5, 144);
+  }
+  else if (v === 'village') { // plaster between timber beams
+    for (let i = 0; i < 260; i++) px(light, hash(i * 1.3) * W, hash(i * 2.9) * 150);
+    rect(lines, 0, 4, W, 3); rect(lines, 0, 144, W, 3);
+    for (let x = 0; x < W; x += 64) {
+      rect(lines, x, 4, 3, 143);
+      line(lines, x + 3, 144, x + 30, 112, R); line(lines, x + 61, 144, x + 34, 112, R);
+    }
+  }
+  else if (v === 'desert') for (let y = 0; y < 150; y += 6) { // adobe bricks
+    rect(lines, 0, y, W, 1);
+    for (let x = (y / 6) % 2 * 7; x < W; x += 14) rect(lines, x, y, 1, 6);
+  }
+  else if (v === 'forest') for (let x = 0; x < W; x += 7) { // dark boards with moss creeping up
+    rect(lines, x, 0, 1, 150);
+    for (let y = 150 - 1; y > 128; y--) if (hash(x * 11 + y) > 0.55 + (150 - y) * 0.02) px(light, x + 1 + Math.floor(hash(x + y) * 5), y);
+  }
   rect(C.wood, 0, 150, W, H - 150);                              // floor
   rect(C.oak, 0, 150, W, 2);                                     // baseboard
   for (let y = 158; y < H; y += 8) rect(C.oak, 0, y, W, 1);      // floor planks
@@ -1344,8 +1387,8 @@ function drawRoom() {
 }
 
 function drawLights(t, s) {
-  glow(C.navy, 172, 100, 78, 36);                                                     // monitor glow
-  glow(world.portalFlare > 0 ? C.green : C.navy, PORTAL.x, PORTAL.y, 26, 26, 0.35); // portal glow
+  glow(wallLight(), 172, 100, 78, 36);                                                   // monitor glow
+  glow(world.portalFlare > 0 ? C.green : wallLight(), PORTAL.x, PORTAL.y, 26, 26, 0.35); // portal glow
   if (lightning()) glow(C.blue, 66, 110, 80, 60, 0.6);
   if (callQueue().some(a => a.arrived) && Math.floor(t * 4) % 2) glow(C.amber, COMM.x + 21, 140, 14, 10, 0); // intercom beacon
   // Sunlight or moonlight on the floor, dimmer at twilight, under clouds or a thin moon, gone in rain
