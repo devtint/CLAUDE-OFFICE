@@ -987,7 +987,10 @@ function activityOf(c) {
   switch (c.state) {
     case 'working':  return c.tool ? KIND(c.tool) : 'think';
     case 'error':    return 'fix';
+    case 'failed':   return 'fix';    // an API error ended the turn
     case 'thinking': return 'think';
+    case 'compacting': return 'think'; // naps at the desk while the conversation is compacted
+    case 'limit':    return 'off';     // hit the usage limit: sleeps until it resets
     case 'waiting':  return 'wait';
     case 'done':     return 'done';
     default:         return 'off';
@@ -1001,7 +1004,13 @@ const DESK_ONLY = ['sit', 'sleep', 'gaze', 'fish', 'tea', 'book', 'work', 'busy'
 function applyState(a, c) {
   if (c.colour !== a.info.colour) a.mat = modelMat(c.colour); // the model can change mid-session
   a.info = c;
-  a.napping = c.compacted != null && c.compacted < 12;       // just compacted: a quick nap
+  a.napping = c.compacted != null && c.compacted < 12;       // compacting or just compacted: a quick nap
+  // auto mode refused a step: a red X over its head
+  if (c.denied != null) {
+    const stamp = Date.now() / 1000 - c.denied;
+    if (!a.deniedStamp || Math.abs(stamp - a.deniedStamp) > 2) pop('X', a.x - 1, bottomOf(a) - 20, RED);
+    a.deniedStamp = stamp;
+  }
   // a new test result: cheer when it passes, wince when it fails
   if (c.test && c.test_age != null) {
     const stamp = Date.now() / 1000 - c.test_age;
@@ -1410,6 +1419,7 @@ async function poll() {
     world.today = d.today || null;
     world.plant = d.plant || null;
     world.update = d.update || null;
+    world.limits = d.limits || null;
     sync(d.claudes || []);
   } catch (e) {
     // server stopped: the desktop app window (opened with ?app) closes itself; elsewhere keep the last picture
@@ -1668,7 +1678,7 @@ function el(tag, cls, str) {
 let listShown = '';
 function renderList(list) {
   const shownNow = listEl.style.display === 'none' ? 'hidden' : JSON.stringify([world.ready,
-    list.map(c => [c.colour, c.parent, c.name, c.project, c.word || c.state, c.step || c.desc])]);
+    list.map(c => [c.colour, c.parent, c.name, c.title || c.project, c.word || c.state, c.step || c.desc])]);
   if (shownNow === listShown) return;
   listShown = shownNow;
   listEl.replaceChildren();
@@ -1679,7 +1689,8 @@ function renderList(list) {
   for (const c of list) {
     const row = el('div', 'row'), dot = el('div', 'dot'), body = el('div');
     dot.style.background = c.colour || C.amber;
-    body.append(el('span', 'name', (c.parent ? '  ' : '') + (c.name || 'Claude') + (c.project ? ' . ' + c.project : '')),
+    const where = c.title || c.project; // the session's name when known, else its project
+    body.append(el('span', 'name', (c.parent ? '  ' : '') + (c.name || 'Claude') + (where ? ' . ' + where : '')),
       document.createTextNode(' '), el('span', 'state', c.word || c.state || ''));
     if (c.step || c.desc) body.append(el('div', 'step', c.step || c.desc));
     row.append(dot, body);
@@ -3142,6 +3153,44 @@ function drawStats() {
   if (d.fail) { text(C.white, '/', x + 30, y + 15); text(C.amber, String(d.fail), x + 34, y + 15); }
 }
 
+// Usage limits, under the calendar: two bars, the 5-hour limit and the weekly one. Only there when
+// the office status line is installed and Claude Code reports limits (Pro and Max plans).
+const LIMITS = { x: 194, y: 59 };
+const limitColour = used => used >= 90 ? RED : used >= 70 ? C.amber : C.green;
+function drawLimits(t) {
+  const L = world.limits;
+  if (!L) return;
+  const { x, y } = LIMITS;
+  rect(C.navy, x, y, 22, 22);
+  rect(C.night, x + 2, y + 2, 18, 18);
+  [['five_hour', '5H', x + 3], ['seven_day', 'WK', x + 12]].forEach(([key, label, bx]) => {
+    const w = L[key];
+    rect(C.navy, bx + 1, y + 3, 5, 11); // the empty bar
+    if (w) {
+      const h = Math.max(1, Math.round(Math.min(100, w.used) / 100 * 11));
+      if (w.used < 100 || Math.floor(t * 2) % 2) rect(limitColour(w.used), bx + 1, y + 14 - h, 5, h); // full: blinks
+    }
+    text(w ? C.blue : C.navy, label, bx, y + 15);
+  });
+}
+
+function untilText(secs) {
+  if (secs == null) return '';
+  const m = Math.round(secs / 60);
+  return m < 60 ? `${m}m` : m < 48 * 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.round(m / 1440)}d`;
+}
+
+function showLimits(e) {
+  const L = world.limits || {}, part = (w, name) => w ? `${name} ${Math.round(w.used)}% used` + (w.resets != null ? `, resets in ${untilText(w.resets)}` : '') : '';
+  card.replaceChildren(el('div', 'name', 'Usage limits'),
+    el('div', 'state', 'From the status line of your newest session'),
+    el('div', 'step', [part(L.five_hour, '5-hour'), part(L.seven_day, 'Weekly')].filter(Boolean).join('  |  ')));
+  card.style.display = 'block';
+  card.style.left = Math.min(e.clientX + 12, innerWidth - 270) + 'px';
+  card.style.top = Math.min(e.clientY + 14, innerHeight - 90) + 'px';
+  setTimeout(() => { card.style.display = 'none'; }, 4000);
+}
+
 // Mailbox on the floor; its flag goes up while a session uses a mail tool
 function drawMailbox() {
   const x = MAILBOX_X;
@@ -3236,6 +3285,7 @@ function draw(t) {
   if (shown('clock')) drawClock();
   if (shown('calendar')) drawCalendar();
   if (shown('today')) drawStats();
+  if (shown('today')) drawLimits(t);
   drawFestiveWall(t);
   drawShelf(t);
   if (shown('touches')) drawTouches(t, sk);
@@ -3264,7 +3314,7 @@ let last = 0, acc = 0, now = 0, drawn = 0, busyAt = 0, touchedAt = -1e9;
 
 // Resting: after 20 quiet seconds (no Claude working, thinking or asking, nothing walking, the portal
 // shut, nobody touching the room) the room draws at 10 fps; anything happening brings the full rate back
-const BUSY = ['working', 'thinking', 'waiting', 'error'];
+const BUSY = ['working', 'thinking', 'waiting', 'error', 'failed', 'compacting'];
 function restful(t) {
   const busy = agents.some(a => BUSY.includes(a.info.state) || a.moving || a.action === 'leave')
     || world.portal.open > 0 || panel.classList.contains('open') || t - touchedAt < 10; // the cat's wandering does not count
@@ -3312,8 +3362,9 @@ function agentAt(x, y) {
 function showCard(a, e) {
   const c = a.info;
   card.replaceChildren(
-    el('div', 'name', (c.name || 'Claude') + (c.project ? ' . ' + c.project : '')),
+    el('div', 'name', (c.name || 'Claude') + (c.title || c.project ? ' . ' + (c.title || c.project) : '')),
     el('div', 'state', c.word || c.state || ''));
+  if (c.title && c.project) card.append(el('div', 'step', 'Project: ' + c.project));
   if (c.step || c.desc) card.append(el('div', 'step', c.step || c.desc));
   const done = (c.todos || []).filter(i => i.status === 'completed').length;
   const facts = [c.turn && 'Turn ' + c.turn, c.steps && c.steps + ' steps', c.context && 'Context ' + c.context,
@@ -3355,6 +3406,7 @@ canvas.addEventListener('pointerdown', e => {
   else if (hit(PORTAL.x - PORTAL.rx, PORTAL.y - PORTAL.ry, PORTAL.x + PORTAL.rx, PORTAL.y + PORTAL.ry)) {
     if (world.portal.open > 0) world.portalFlare = 1; else world.portal.peek = 9; // asks the cat to open it
   }
+  else if (shown('today') && world.limits && hit(LIMITS.x, LIMITS.y, LIMITS.x + 22, LIMITS.y + 22)) showLimits(e);
   else if (shown('clock') && hit(138, 26, 188, 56)) { cfg.clock24 = !cfg.clock24; saveSettings(); }
   else if (shown('cup') && hit(CUP_X - 2, 110, CUP_X + 13, 128)) puffSteam(25, 12);
   else if (hit(278, 52, 300, 62)) { world.piParty = 0.6; openSettings(); } // the Pi runs the room: its settings

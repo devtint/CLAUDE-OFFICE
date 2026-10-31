@@ -38,7 +38,8 @@ MODEL_COLOURS = {
 }
 OTHER_COLOUR = '#9a948a'
 STATE_WORDS = {'working': 'Working', 'thinking': 'Thinking', 'waiting': 'May need you',
-               'error': 'Fixing an error', 'done': 'Done', 'off': 'Idle'}
+               'error': 'Fixing an error', 'done': 'Done', 'off': 'Idle',
+               'failed': 'Stopped by an error', 'limit': 'Hit the usage limit', 'compacting': 'Compacting'}
 
 TOOL_WORDS = {
     'Bash': 'Running a command', 'PowerShell': 'Running a command',
@@ -216,7 +217,9 @@ LATEST_MODEL = [0, '']
 
 def model_info(model):
     """'claude-opus-5-5' -> ('Opus 5.5', colour)."""
-    m = re.match(r'claude-([a-z]+)((?:-\d{1,2})*)', model or '')
+    model = str(model or '').lower()
+    # 'claude-opus-5-5', 'us.anthropic.claude-opus-5-5', or a bare 'opus-5-5' from a hook
+    m = re.search(r'claude-([a-z]+)((?:-\d{1,2})*)', model) or re.match(r'(opus|sonnet|haiku|fable)((?:-\d{1,2})*)', model)
     if not m:
         return 'Claude', OTHER_COLOUR
     family = m.group(1)
@@ -323,6 +326,7 @@ class Session:
         self.offset = 0
         self.mtime = 0
         self.model = ''
+        self.model_ts = 0     # when the transcript last named the model
         self.last = None
         self.started = 0
         self.turn_start = 0
@@ -344,6 +348,7 @@ class Session:
         self.background = []  # when background commands started
         self.streak = 0       # tool errors in a row
         self.hook = None      # the latest note from the office hook, if installed
+        self.line = None      # the latest note from the office status line, if installed
 
     def update(self):
         try:
@@ -413,7 +418,8 @@ class Session:
                     self.context = ctx
             if msg.get('model') and msg['model'] != '<synthetic>':
                 self.model = msg['model']
-                if (ts or 0) >= LATEST_MODEL[0]:
+                self.model_ts = ts or 0
+                if not self.parent and (ts or 0) >= LATEST_MODEL[0]:  # helpers often run a smaller model
                     LATEST_MODEL[:] = [ts or 0, self.model]
             if msg.get('stop_reason') == 'end_turn':
                 self.events.append((ts, 'done'))
@@ -480,15 +486,62 @@ class Session:
         return self.parent is not None
 
     def model_id(self):
-        """The model this session runs on; before its first reply, its parent's or the newest one seen."""
-        return self.model or (self.parent.model if self.parent else '') or LATEST_MODEL[1]
+        """The model this session runs on: the newest of what the transcript, the hook (a start or a
+        model switch) and the status line say; before any of them, the newest model seen anywhere."""
+        if self.parent:
+            return self.model or self.parent.model_id()
+        h, line = self.hook or {}, self.line or {}
+        said = [(self.model_ts, self.model), (h.get('model_time') or 0, h.get('model') or ''),
+                (line.get('time') or 0, line.get('model') or '')]
+        said = [x for x in said if x[1] and isinstance(x[1], str)]
+        return max(said, key=lambda x: x[0])[1] if said else LATEST_MODEL[1]
+
+    def title(self):
+        """The session's name (from /rename or its generated title), when the hook or status line knows it."""
+        return str((self.line or {}).get('title') or (self.hook or {}).get('title') or '')
+
+    def agent_id(self):
+        """A helper's id, from its transcript name (agent-<id>.jsonl)."""
+        n = os.path.basename(self.path)[:-len('.jsonl')]
+        return n[len('agent-'):] if n.startswith('agent-') else n
+
+    def ended(self):
+        """The hook saw the session close (exit, /clear, /resume) and nothing was written since."""
+        e = (self.hook or {}).get('ended') or 0
+        return not self.helper and e >= self.mtime - 2
+
+    def compacting(self, now):
+        h = self.hook or {}
+        c = h.get('compacting') or 0
+        return c > (h.get('compacted') or 0) and now - c < 600
+
+    def compact_age(self, now):
+        """Seconds since the conversation was compacted (0 while it is), or None."""
+        if self.compacting(now):
+            return 0
+        t = max(self.compact_time, (self.hook or {}).get('compacted') or 0)
+        return round(now - t) if t else None
+
+    def denied_age(self, now):
+        d = (self.hook or {}).get('denied') or 0
+        return round(now - d) if d and now - d < 60 else None
+
+    def word(self, state):
+        if state == 'failed':
+            kind = str((self.hook or {}).get('type') or '').replace('_', ' ')
+            return 'Stopped: ' + kind if kind and kind != 'unknown' else STATE_WORDS[state]
+        return STATE_WORDS.get(state, state)
 
     def name(self):
         """'Opus 5.5' for a session, the helper type (like 'Explore') for a helper."""
         return (self.label or 'Helper') if self.helper else model_info(self.model_id())[0]
 
     def context_text(self):
-        # only the tokens used: transcripts do not record the window size, so no percentage
+        # transcripts do not record the window size; the office status line does, when installed
+        line = self.line or {}
+        pct, size = line.get('context_pct'), line.get('context_size')
+        if isinstance(pct, (int, float)) and line.get('time', 0) >= self.mtime - 60:
+            return f'{round(pct)}%' + (f' of {short(size)}' if isinstance(size, (int, float)) and size else '')
         return f'{short(self.context)} tokens' if self.context else ''
 
     def status(self):
@@ -500,17 +553,34 @@ class Session:
         d = self.last
         if self.helper and self.tool_id and self.tool_id in self.done_ids:
             return 'done', ''
-        if not d or age > ACTIVE_SECS:
+        if self.helper and self.parent.hook:  # the hook saw this helper finish
+            agents = self.parent.hook.get('agents') or {}
+            a = agents.get(self.agent_id()) or agents.get('agent-' + self.agent_id())
+            if isinstance(a, dict) and (a.get('stop') or 0) >= self.mtime - 2:
+                return 'done', ''
+        if not d or age > ACTIVE_SECS or self.ended():
             return 'off', ''
         # the office hook knows for sure, as long as nothing was written after it
         h = self.hook
+        if h and self.compacting(now):
+            return 'compacting', ''
+        if (h and h.get('event') == 'PermissionRequest'
+                and h.get('time', 0) >= max(self.mtime, self.helper_mtime) - 0.5):
+            # asked the moment the prompt appeared; the transcript moves on once you answer
+            return 'waiting', str(h.get('tool') or '')
         if h and h.get('time', 0) >= self.mtime - 2:
             text = (str(h.get('type', '')) + ' ' + str(h.get('message', ''))).lower()
-            if h.get('event') == 'Notification' and 'permission' in text:
+            event = h.get('event')
+            if event == 'StopFailure':
+                if h.get('type') == 'rate_limit':
+                    return 'limit', ''
+                return ('failed' if now - h['time'] < 300 else 'done'), ''
+            if event == 'Notification' and ('permission' in text or h.get('type') in (
+                    'agent_needs_input', 'elicitation_dialog', 'elicitation_url_dialog')):
                 items = (d.get('message') or {}).get('content')
                 tools = [x for x in (items if isinstance(items, list) else []) if x.get('type') == 'tool_use']
                 return 'waiting', tools[-1].get('name', '') if tools else ''
-            if h.get('event') == 'Stop' or 'waiting for your input' in text or 'idle' in text:
+            if event == 'Stop' or 'waiting for your input' in text or 'idle' in text:
                 return 'done', ''
         msg = d.get('message') or {}
         content = msg.get('content')
@@ -582,6 +652,7 @@ class Tracker(threading.Thread):
         self.listing = {}    # folder -> (folder mtime, recent .jsonl paths)
         self.next_full = 0
         self.parents = {}    # loose helper transcript -> its session id
+        self.limits = None   # the 5-hour and weekly usage limits, from the office status line
 
     def run(self):
         while True:
@@ -651,7 +722,8 @@ class Tracker(threading.Thread):
                 del self.sessions[p]
             self.parents = {p: v for p, v in self.parents.items() if p in fresh}
             mains = sorted((s for s in self.sessions.values() if not s.helper), key=lambda s: -s.mtime)
-            active = [s for s in mains if now - s.mtime < ACTIVE_SECS][:MAX_PETS]
+            # a session closed in Claude Code (the hook saw it end) leaves at once
+            active = [s for s in mains if now - s.mtime < ACTIVE_SECS and not s.ended()][:MAX_PETS]
             helpers = []
             for s in self.sessions.values():
                 if s.helper and s.parent in active:
@@ -666,11 +738,13 @@ class Tracker(threading.Thread):
             self.snapshot = (active + helpers[:MAX_HELPERS], mains[0] if mains else None)
 
     def read_hooks(self, now):
-        """Notes from the office hook: one small file per session; day-old ones are tidied away."""
+        """Notes from the office hook (<session>.json) and status line (<session>.status.json): one
+        small file each per session; day-old ones are tidied away. The newest usage limits are kept."""
         try:
             files = [f for f in os.scandir(HOOKS_DIR) if f.name.endswith('.json')]
         except OSError:
             return
+        newest = None
         with self.lock:
             by_path = {os.path.normcase(os.path.abspath(p)): s for p, s in self.sessions.items()}
         for f in files:
@@ -682,10 +756,19 @@ class Tracker(threading.Thread):
                     note = json.load(fh)
             except (OSError, ValueError):
                 continue
+            if not isinstance(note, dict):
+                continue
+            line = f.name.endswith('.status.json')
+            if line and note.get('limits') and (not newest or note.get('time', 0) > newest.get('time', 0)):
+                newest = note
             s = by_path.get(os.path.normcase(os.path.abspath(str(note.get('transcript') or ''))))
             if s:
                 with self.lock:
-                    s.hook = note
+                    if line:
+                        s.line = note
+                    else:
+                        s.hook = note
+        self.limits = limits_of(newest, now)
 
     def scan_helpers(self, main, now, loose=()):
         """Subagent transcripts live in a folder named after the session (older versions: beside it)."""
@@ -721,6 +804,22 @@ class Tracker(threading.Thread):
                 s.label = s.label or kind or 'Helper'
             for s in mine:
                 s.label = s.label or 'Helper'
+
+
+def limits_of(note, now):
+    """{'five_hour': {'used', 'resets'}, 'seven_day': ...} from a status line note; windows that have
+    reset are left out (the next status line run brings fresh numbers)."""
+    if not note or now - note.get('time', 0) > 6 * 3600:
+        return None
+    out = {}
+    for name, w in (note.get('limits') or {}).items():
+        if not isinstance(w, dict) or not isinstance(w.get('used'), (int, float)):
+            continue
+        resets = w.get('resets') if isinstance(w.get('resets'), (int, float)) else None
+        if resets and resets < now:
+            continue
+        out[name] = {'used': round(w['used'], 1), 'resets': round(resets - now) if resets else None}
+    return out or None
 
 
 def log_error():

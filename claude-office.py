@@ -46,9 +46,10 @@ def state(tracker):
                 'parent': s.parent.path if s.parent else '',
                 'name': s.name(),
                 'project': s.project,
+                'title': s.title(),                          # the session's name, if the hook or status line knows it
                 'colour': colour,
                 'state': st,
-                'word': pet.STATE_WORDS.get(st, st),
+                'word': s.word(st),
                 'doing': pet.tool_word(tool) if tool else '',
                 'step': step,
                 'desc': s.desc,
@@ -68,13 +69,15 @@ def state(tracker):
                 'test_age': round(now - s.test_time) if s.test_time else None,
                 'commits': sum(1 for _, k in s.events if k == 'commit'),
                 'pushes': sum(1 for _, k in s.events if k == 'push'),
-                'compacted': round(now - s.compact_time) if s.compact_time else None,
+                'compacted': s.compact_age(now),
+                'denied': s.denied_age(now),                 # seconds since auto mode refused a step
                 'background': sum(1 for b in s.background if now - b < 900),
                 'streak': s.streak,
             })
         today = day_numbers(tracker.sessions.values())
     return {'claudes': out, 'ready': tracker.ready, 'today': today, 'plant': plant(today),
-            'update': update_badge(), 'hooks': os.path.exists(pet.HOOKS_MARKER)}
+            'update': update_badge(), 'hooks': os.path.exists(pet.HOOKS_MARKER),
+            'limits': tracker.limits}
 
 
 PLANT_FILE = os.path.join(pet.HOME, '.claude', 'office-plant.json')
@@ -269,6 +272,16 @@ def running():
         return s.connect_ex(('127.0.0.1', PORT)) == 0
 
 
+def upgrade_hooks():
+    """Hooks added by an older version get the newer events, so an update needs no extra step."""
+    try:
+        import install
+        if install.hooks_outdated():
+            install.set_hooks(True)
+    except Exception:
+        pet.log_error()
+
+
 def main():
     if '--stop' in sys.argv:
         try:
@@ -278,6 +291,7 @@ def main():
         return
     if running():
         return
+    upgrade_hooks()
     tracker = pet.Tracker()
     tracker.start()
     server = ThreadingHTTPServer(('127.0.0.1', PORT), Handler)

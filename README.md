@@ -28,6 +28,15 @@ Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packag
   asking. A soft chime and a desktop notification can be turned on in the settings. Questions (`AskUserQuestion`) and plans to approve (`ExitPlanMode`)
   count straight away. With the hooks installed (below), permission prompts count the moment they
   appear; without them, a step that has waited 45 seconds counts.
+- **With the hooks (below):** a Claude leaves through the portal the moment its session is closed,
+  takes its new colour the moment the model switches (also an automatic fallback), naps for the
+  whole of a compaction, goes to `FIX` when an API error ends the turn ("Stopped: overloaded"),
+  sleeps when the usage limit is hit, and gets a red `X` when auto mode refuses a step. Helpers
+  leave as soon as they finish.
+- **With the status line (below):** cards show how full the context window is ("37% of 1M") and
+  the session's name (from `/rename` or its generated title), and two bars under the calendar
+  show the 5-hour and weekly usage limits (green, amber from 70%, red from 90%; tap them for the
+  reset times). Limits are only reported on Pro and Max plans.
 - **The rest of the room:** reading files sends an agent to the bookshelf, web tools to the
   laptop and thinking shows `...`. Idle sessions sleep on the edge of the desk.
 - **The laptop** counts the open tabs (sessions), with a dot for what each one is doing.
@@ -108,10 +117,15 @@ https://github.com/devtint/CLAUDE-OFFICE
    If the folder is not a git clone, tell me and offer to replace it with a fresh clone.
 3. Tell me in a few lines what changed, from "git log --oneline -5" and README.md.
 4. Read install.py and office-hook.py, then ask me whether to add the optional office hooks.
-   They make the office show permission prompts and finished turns immediately, run only on
-   those events and cost no tokens. If I say yes, run install.py with --hooks using Python
-   (python3 on macOS and Linux, python on Windows). Tell me "install.py --uninstall-hooks"
-   removes them.
+   They make the office show sessions starting and ending, permission prompts, finished or failed
+   turns, model switches, compaction and helpers immediately, and cost no tokens. If I say yes,
+   run install.py with --hooks using Python (python3 on macOS and Linux, python on Windows).
+   Tell me "install.py --uninstall-hooks" removes them. If they were already added, the office
+   adds the newer events by itself when it starts.
+   Then read office-statusline.py and ask me whether to add the office status line too. It lets
+   the office show the context percentage, the usage limits and session names, and my own status
+   line keeps showing as before. If I say yes, run install.py with --statusline. Tell me
+   "install.py --uninstall-statusline" puts mine back.
 5. If I use the desktop shortcuts, run install.py again (without --hooks) to refresh them.
 6. Restart the office: run open-office.pyw with --stop, wait a moment, then run it again
    with --server.
@@ -160,8 +174,14 @@ What changed since the open-plan office:
 - The wall can be picked separately from the view, and the ambient sound has a volume.
 - The room rests at 10 fps while no Claude is working, and is back at full speed the moment one is.
 - A frame rate setting, 30 fps by default, so the room uses less CPU, also on high refresh monitors.
-- Cards show the context tokens used, without a percentage, since transcripts do not record the window size.
-- After adding the hooks, restart Claude Code (or start a new session) so it picks them up.
+- The hooks now cover sessions starting and ending, model switches, permission prompts the moment
+  they appear, turns ended by an API error, compaction and helpers. They run in the background, so
+  Claude Code never waits for them. Hooks added by an older version get the new events by
+  themselves the next time the office starts.
+- An optional status line (`install.py --statusline`) gives the office the context percentage, the
+  5-hour and weekly usage limits, and session names. Your own status line keeps showing.
+- A session that has not replied yet shows its model ("Opus 5.5") instead of "Claude".
+- After adding the hooks or the status line, restart Claude Code (or start a new session) so it picks them up.
 
 ## Install
 
@@ -182,14 +202,22 @@ Then make the two desktop shortcuts, and if you like, add the office hooks:
 ```bash
 cd ~/.claude/skills/claude-office
 python3 install.py           # on Windows: python install.py
-python3 install.py --hooks   # optional: exact "needs you" and "done"
+python3 install.py --hooks        # optional: the office knows at once instead of guessing
+python3 install.py --statusline   # optional: context %, usage limits and session names
 ```
 
-The hooks make Claude Code tell the office the moment a session shows a permission prompt or
-finishes a turn. They are two tiny entries in `~/.claude/settings.json` (a backup is kept as
-`settings.json.office-backup`) that run `office-hook.py` only on those events; it writes one small
-file and costs no tokens. `install.py --uninstall-hooks` removes them and leaves your other
-settings as they were.
+The hooks make Claude Code tell the office the moment a session starts or ends, shows a
+permission prompt, finishes a turn or stops on an API error, switches model, compacts, or starts
+and finishes a helper. They are small entries in `~/.claude/settings.json` (a backup is kept as
+`settings.json.office-backup`) that run `office-hook.py` in the background on those events only;
+it writes one small file per session and costs no tokens. `install.py --uninstall-hooks` removes
+them and leaves your other settings as they were.
+
+The status line gives the office what only Claude Code knows: how full the context window is, the
+5-hour and weekly usage limits (Pro and Max plans), and the session's name. `office-statusline.py`
+saves those in a small file, then runs the status line you already had and shows what it prints,
+so yours looks the same (without one, it shows the model and the context percentage).
+`install.py --uninstall-statusline` puts yours back.
 
 | Shortcut | What it does |
 |---|---|
@@ -306,7 +334,8 @@ geocoding and runs only when you press FIND.
   nothing) and works out each session's model, state, current tool, recent steps, task list, tests, commits and
   pushes. A session stays in the room while its transcript changed in the last 10 minutes (see
   Settings).
-- `office-hook.py` is the optional Claude Code hook (see Install).
+- `office-hook.py` is the optional Claude Code hook and `office-statusline.py` the optional status
+  line (see Install). Both leave small notes in `~/.claude/office-hooks` that the tracker reads.
 - `claude-office.py` is a small local server on `127.0.0.1:7788`. It serves the room, `/state`
   (the sessions as JSON, with today's numbers and the plant) and `/settings`. It only listens on your own computer, and only one runs at a time.
 - `workspace.html` is the room: a 320x180 pixel canvas scaled up crisp, drawn in eight colours with

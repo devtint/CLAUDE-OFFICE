@@ -4,6 +4,9 @@
 #   python install.py --uninstall   remove them (and the full screen window's browser profile)
 #   python install.py --hooks       add the office hooks to Claude Code (exact "needs you" and "done")
 #   python install.py --uninstall-hooks   remove the hooks again
+#   python install.py --statusline  let the office read the status line (context %, usage limits, names);
+#                                   your own status line keeps showing as before
+#   python install.py --uninstall-statusline   put your own status line back
 # Run it again after moving this folder.
 import json
 import os
@@ -115,13 +118,21 @@ def linux(folder, remove):
 
 
 # ---------- Claude Code hooks ----------
-# The hook runs only on notifications (a permission prompt, or waiting for input) and when a turn
-# finishes. It writes a tiny file the tracker reads; it never calls Claude, so it costs no tokens.
+# The hook runs at the moments the office cares about (see office-hook.py): a session starting or
+# ending, a permission prompt, a turn finishing or failing, a model switch, compaction, helpers.
+# It writes a tiny file the tracker reads; it never calls Claude, so it costs no tokens.
 
 SETTINGS = os.path.join(os.path.expanduser('~'), '.claude', 'settings.json')
 HOOK_SCRIPT = os.path.join(HERE, 'office-hook.py')
-HOOK_EVENTS = ('Notification', 'Stop')
+HOOK_EVENTS = ('Notification', 'Stop', 'StopFailure', 'SessionStart', 'SessionEnd', 'PostModelSwitch',
+               'PermissionRequest', 'PermissionDenied', 'PreCompact', 'PostCompact',
+               'SubagentStart', 'SubagentStop')
+# every event but SessionEnd runs in the background, so Claude Code never waits for the office;
+# SessionEnd stays in step, as Claude Code may be closing and would not wait for a background hook
+IN_STEP = ('SessionEnd',)
 MARKER = os.path.join(os.path.expanduser('~'), '.claude', 'office-hooks', '.installed')
+STATUS_SCRIPT = os.path.join(HERE, 'office-statusline.py')
+STATUS_ORIGINAL = os.path.join(os.path.expanduser('~'), '.claude', 'office-statusline-original.json')
 
 
 def hook_command():
@@ -132,38 +143,79 @@ def hook_command():
     return f'"{py}" "{HOOK_SCRIPT}"'
 
 
+def status_command():
+    py = sys.executable
+    if os.name == 'nt':  # the status line prints, so it needs python.exe, not pythonw.exe
+        p = os.path.join(os.path.dirname(py), 'python.exe')
+        py = p if os.path.exists(p) else py
+    return f'"{py}" "{STATUS_SCRIPT}"'
+
+
 def is_ours(entry):
-    return any('office-hook.py' in str(h.get('command', '')) for h in entry.get('hooks', []))
+    return isinstance(entry, dict) and any(
+        'office-hook.py' in str(h.get('command', '')) for h in entry.get('hooks', []) if isinstance(h, dict))
+
+
+def our_hook(event):
+    h = {'type': 'command', 'command': hook_command()}
+    if event not in IN_STEP:
+        h['async'] = True
+    return {'hooks': [h]}
+
+
+def read_settings(add):
+    """~/.claude/settings.json as a dict ({} if missing), or None if it is not valid JSON."""
+    if not os.path.exists(SETTINGS):
+        return {}
+    try:
+        with open(SETTINGS, encoding='utf-8') as fh:
+            settings = json.load(fh)
+    except ValueError:
+        print('could not read', SETTINGS, '(it is not valid JSON), so it was left unchanged')
+        return None
+    backup = SETTINGS + '.office-backup'
+    if add and not os.path.exists(backup):
+        shutil.copy2(SETTINGS, backup)
+    return settings if isinstance(settings, dict) else None
+
+
+def write_settings(settings):
+    os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
+    with open(SETTINGS + '.tmp', 'w', encoding='utf-8') as fh:
+        json.dump(settings, fh, indent=2)
+    os.replace(SETTINGS + '.tmp', SETTINGS)
+
+
+def hooks_outdated():
+    """True when the hooks were added by an older version and some events are missing."""
+    if not os.path.exists(MARKER):
+        return False
+    try:
+        with open(SETTINGS, encoding='utf-8') as fh:
+            hooks = json.load(fh).get('hooks') or {}
+    except (OSError, ValueError, AttributeError):
+        return False
+    return any(not any(map(is_ours, hooks.get(ev) or [])) for ev in HOOK_EVENTS)
 
 
 def set_hooks(add):
     """Adds or removes the office hooks in ~/.claude/settings.json, keeping everything else as it is."""
-    settings = {}
-    if os.path.exists(SETTINGS):
-        try:
-            with open(SETTINGS, encoding='utf-8') as fh:
-                settings = json.load(fh)
-        except ValueError:
-            print('could not read', SETTINGS, '(it is not valid JSON), so it was left unchanged')
-            return
-        backup = SETTINGS + '.office-backup'
-        if add and not os.path.exists(backup):
-            shutil.copy2(SETTINGS, backup)
+    settings = read_settings(add)
+    if settings is None:
+        return
     hooks = settings.setdefault('hooks', {})
-    for event in HOOK_EVENTS:
+    # every event, including ones an older version used, loses its office hook first
+    for event in set(HOOK_EVENTS) | {e for e, v in hooks.items() if isinstance(v, list) and any(map(is_ours, v))}:
         kept = [e for e in hooks.get(event, []) if not is_ours(e)]
-        if add:
-            kept.append({'hooks': [{'type': 'command', 'command': hook_command()}]})
+        if add and event in HOOK_EVENTS:
+            kept.append(our_hook(event))
         if kept:
             hooks[event] = kept
         else:
             hooks.pop(event, None)
     if not hooks:
         settings.pop('hooks', None)
-    os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
-    with open(SETTINGS + '.tmp', 'w', encoding='utf-8') as fh:
-        json.dump(settings, fh, indent=2)
-    os.replace(SETTINGS + '.tmp', SETTINGS)
+    write_settings(settings)
     if add:
         os.makedirs(os.path.dirname(MARKER), exist_ok=True)
         open(MARKER, 'w').close()
@@ -174,9 +226,47 @@ def set_hooks(add):
         print('removed the office hooks from', SETTINGS)
 
 
+def set_statusline(add):
+    """Puts the office status line in front of yours (yours is saved and still shown), or puts yours back."""
+    settings = read_settings(add)
+    if settings is None:
+        return
+    current = settings.get('statusLine')
+    ours = isinstance(current, dict) and 'office-statusline.py' in str(current.get('command', ''))
+    os.makedirs(os.path.dirname(STATUS_ORIGINAL), exist_ok=True)
+    if add:
+        if not ours:  # keep yours, so the office can run it and put it back later
+            with open(STATUS_ORIGINAL, 'w', encoding='utf-8') as fh:
+                json.dump({'statusLine': current}, fh, indent=2)
+        line = {'type': 'command', 'command': status_command()}
+        if isinstance(current, dict):  # your padding and refresh timer still apply
+            line.update({k: v for k, v in current.items() if k not in ('type', 'command')})
+        settings['statusLine'] = line
+        write_settings(settings)
+        print('the office now reads the status line in', SETTINGS)
+        return
+    if ours:
+        try:
+            with open(STATUS_ORIGINAL, encoding='utf-8') as fh:
+                saved = json.load(fh).get('statusLine')
+        except (OSError, ValueError, AttributeError):
+            saved = None
+        if saved:
+            settings['statusLine'] = saved
+        else:
+            settings.pop('statusLine', None)
+        write_settings(settings)
+    if os.path.exists(STATUS_ORIGINAL):
+        os.remove(STATUS_ORIGINAL)
+    print('put your own status line back in', SETTINGS)
+
+
 def main():
     if '--hooks' in sys.argv or '--uninstall-hooks' in sys.argv:
         set_hooks('--hooks' in sys.argv)
+        return
+    if '--statusline' in sys.argv or '--uninstall-statusline' in sys.argv:
+        set_statusline('--statusline' in sys.argv)
         return
     remove = '--uninstall' in sys.argv
     folder = desktop()
