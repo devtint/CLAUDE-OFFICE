@@ -36,7 +36,7 @@ def state(tracker):
         out = []
         for s in claudes:
             st, tool = s.status()
-            name, colour = pet.model_info(s.model or (s.parent.model if s.parent else ''))
+            name, colour = pet.model_info(s.model_id())
             step = ''
             if s.recent:
                 ts, tname, target = s.recent[-1]
@@ -123,7 +123,7 @@ def day_numbers(sessions):
                 counts[kind] += 1
         n = sum(1 for ts in s.tools if ts >= midnight)
         if n:
-            colour = pet.model_info(s.model or (s.parent.model if s.parent else ''))[1]
+            colour = pet.model_info(s.model_id())[1]
             steps[colour] = steps.get(colour, 0) + n
     counts['top'] = max(steps, key=steps.get) if steps else ''
     return counts

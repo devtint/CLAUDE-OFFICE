@@ -208,6 +208,12 @@ def kind_of(name):
     return 'Other'
 
 
+# the newest model any session has used: (time, model id). A session that has not replied yet
+# (still thinking on its first turn) has no model in its transcript, so it borrows this one
+# instead of showing a plain 'Claude'.
+LATEST_MODEL = [0, '']
+
+
 def model_info(model):
     """'claude-opus-5-5' -> ('Opus 5.5', colour)."""
     m = re.match(r'claude-([a-z]+)((?:-\d{1,2})*)', model or '')
@@ -407,6 +413,8 @@ class Session:
                     self.context = ctx
             if msg.get('model') and msg['model'] != '<synthetic>':
                 self.model = msg['model']
+                if (ts or 0) >= LATEST_MODEL[0]:
+                    LATEST_MODEL[:] = [ts or 0, self.model]
             if msg.get('stop_reason') == 'end_turn':
                 self.events.append((ts, 'done'))
             for x in items:
@@ -471,9 +479,13 @@ class Session:
     def helper(self):
         return self.parent is not None
 
+    def model_id(self):
+        """The model this session runs on; before its first reply, its parent's or the newest one seen."""
+        return self.model or (self.parent.model if self.parent else '') or LATEST_MODEL[1]
+
     def name(self):
         """'Opus 5.5' for a session, the helper type (like 'Explore') for a helper."""
-        return (self.label or 'Helper') if self.helper else model_info(self.model)[0]
+        return (self.label or 'Helper') if self.helper else model_info(self.model_id())[0]
 
     def context_text(self):
         # only the tokens used: transcripts do not record the window size, so no percentage
