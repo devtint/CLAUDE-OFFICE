@@ -94,6 +94,7 @@
     <label>Cat <select id="sCat"><option value="orange">Orange tabby</option><option value="tuxedo">Tuxedo</option><option value="calico">Calico</option></select></label>
     <label>Plant <select id="sPlant"><option value="leafy">Leafy plant</option><option value="cactus">Cactus</option><option value="aloe">Aloe</option></select></label>
     <div class="note">Changing the plant keeps the growth it has.</div>
+    <label>Claudes <select id="sClaudes"><option value="claude">Little Claudes</option><option value="ghost">Ghosts</option></select></label>
     <label class="check"><input type="checkbox" id="sHelpers"> Show subagents</label>
     <label class="check"><input type="checkbox" id="sUpdates"> Check for updates once a day</label>
     <label class="check"><input type="checkbox" id="sSound"> Ambient sound (rain, typing, purring)</label>
@@ -482,7 +483,7 @@ const cable = makeRope(298, 58, 311, 85, 12, 40);
 
 // Settings, the same as DEFAULTS in tracker.py; loaded from /settings (see the Settings panel below)
 const DEFAULTS = { tz: 'Asia/Bangkok', label: 'BKK', city: 'Bangkok', lat: 13.75, lon: 100.5, weather: true, units: 'C',
-  clock24: true, alerts: false, idle: 10, max: 8, helpers: true, calm: false, view: 'city', wall: 'view', cat: 'orange', plant: 'leafy', sound: false, volume: 100, updates: true,
+  clock24: true, alerts: false, idle: 10, max: 8, helpers: true, calm: false, view: 'city', wall: 'view', cat: 'orange', plant: 'leafy', claudes: 'claude', sound: false, volume: 100, updates: true,
   fps: 30, rest: true, brightness: 100, shift: true, awake: false, full: false,
   show_plant: true, show_cup: true, show_tank: true, show_cat: true, show_clock: true, show_calendar: true, show_today: true, show_mailbox: true, show_rug: true, show_touches: true, show_moth: true, show_season: true };
 const cfg = Object.assign({}, DEFAULTS);
@@ -1482,6 +1483,7 @@ function fillPanel() {
   $('sVolume').value = String(cfg.volume);
   $('sCat').value = cfg.cat;
   $('sPlant').value = cfg.plant;
+  $('sClaudes').value = cfg.claudes;
   $('sSound').checked = cfg.sound;
   $('sUpdates').checked = cfg.updates;
   $('sFps').value = String(cfg.fps);
@@ -1576,6 +1578,7 @@ function bindSettings() {
   on('sVolume', 'input', e => { cfg.volume = +e.value; });
   on('sCat', 'change', e => { cfg.cat = e.value; });
   on('sPlant', 'change', e => { cfg.plant = e.value; }); // only the look changes: the growth is the server's
+  on('sClaudes', 'change', e => { cfg.claudes = e.value; });
   on('sSound', 'change', e => { cfg.sound = e.checked; soundOn(); });
   on('sUpdates', 'change', e => { cfg.updates = e.checked; });
   on('sFps', 'change', e => { cfg.fps = +e.value; });
@@ -3127,9 +3130,19 @@ function drawAgent(a, t) {
   const petting = a.action === 'cat' && a.arrived;
 
   const ground = a.level === 'floor' ? FLOOR_Y : a.seat ? 131 : 128;
+  const ghost = ghostly();
   if (feet.y <= ground + 1) {
-    const sw = Math.max(4, Math.round((w + 4) * Math.max(0.4, 1 + a.y / 60)));
+    const sw = Math.max(4, Math.round((w + 4) * Math.max(0.4, 1 + a.y / 60) * (ghost ? 0.6 : 1)));
+    if (ghost) ctx.globalAlpha = 0.45; // a ghost barely casts one
     rect(C.wood, Math.round(a.x - sw / 2), ground, sw, 1);
+    ctx.globalAlpha = 1;
+  }
+
+  if (ghost) { // same agent, no legs: it hovers where the little Claude would have stood
+    const go = { x: feet.x, y: o.y - (2 + Math.sin(t * 1.6 + a.x * 0.2) * 1.1) * s };
+    drawGhost(a, t, go, yaw, w, h, s, typing, petting);
+    drawAgentSigns(a, t, go, yaw, w, h, s, feet);
+    return;
   }
 
   const parts = [];
@@ -3182,6 +3195,11 @@ function drawAgent(a, t) {
   }
   parts.sort((p, q) => p.z - q.z).forEach(p => p.draw());
 
+  drawAgentSigns(a, t, o, yaw, w, h, s, feet);
+}
+
+// What floats over an agent's head: the parcel, the handset, ZZ, chatter and the status bubble
+function drawAgentSigns(a, t, o, yaw, w, h, s, feet) {
   // Status bubble: "!" when it needs you, "..." when thinking, "<>" or "$" while waiting for a free computer
   const top = toScreen(o, rotY([0, h, 0], yaw))[1] - 10 * s;
   if (a.ship) { // the pushed commit as a little parcel
@@ -3204,6 +3222,69 @@ function drawAgent(a, t) {
     const word = a.action === 'busy' ? (a.activity === 'run' ? '$' : '<>') : '.'.repeat(1 + Math.floor(t * 2) % 3);
     text(a.action === 'busy' ? C.amber : C.white, word, feet.x - word.length * 2, top - 2);
   }
+}
+
+// ---------- Ghost Claudes: the same agents, floating, when the settings ask for ghosts ----------
+// Only the figure changes. Everything else about an agent - where it goes, what it does, its model
+// colour, its signs - is untouched, so a ghost works at the desk exactly like a little Claude.
+
+const ghostly = () => (params.get('claudes') || cfg.claudes) === 'ghost';
+
+// Drawn flat rather than as boxes: a domed head, straight sides and a hem that ripples. It keeps the
+// model's colour, so Opus, Sonnet, Haiku and Fable are still told apart at a glance.
+function drawGhost(a, t, o, yaw, w, h, s, typing, petting) {
+  const hw = Math.max(2.5, w * 0.4), head = o.y - h - 3 * s, hem = o.y + 4 * s, dome = hw * 1.35;
+  const sleepy = a.action === 'sleep' || a.napping;
+  const wisp = (x, y, c, alpha) => { ctx.globalAlpha = alpha; px(c, x, y); ctx.globalAlpha = 1; };
+
+  if (a.moving) for (let i = 1; i <= 3; i++) // a trail of wisps behind it
+    wisp(o.x - a.face * (hw + i * 1.6), hem - 2 - (i % 2), a.mat.lit, 0.3 - i * 0.07);
+
+  ctx.globalAlpha = sleepy ? 0.62 : 0.85; // you can see the room through a ghost
+  for (let x = -Math.round(hw); x <= Math.round(hw); x++) {
+    const nx = x / hw;
+    const topY = Math.round(head + (1 - Math.sqrt(Math.max(0, 1 - nx * nx))) * dome);
+    const botY = Math.round(hem - 1.2 - Math.cos(x * 1.05 + t * 3) * 1.3); // the hem ripples as it floats
+    if (botY < topY) continue;
+    rect(nx > 0.3 ? a.mat.dark : a.mat.lit, o.x + x, topY, 1, botY - topY + 1);
+    if (nx < -0.2 && nx > -0.85) px(C.white, o.x + x, topY); // light along the top left, like the boxes
+  }
+  ctx.globalAlpha = 1;
+
+  line(C.oak, o.x, head, o.x, head - 3 * s);     // the antenna: a ghost is still a Claude
+  rect(C.white, o.x - 1, head - 3 * s - 2, 2, 2);
+
+  // Arms: little wisps at the sides, raised for the same things the boxes raise them for
+  const beat = Math.floor(t * 4) % 2, near = rotY([1, 0, 0], yaw)[2] > 0 ? 1 : -1;
+  for (const side of [-1, 1]) {
+    let ay = 3;
+    if ((a.happy > 0 || petting) && side === near) ay = 8 + (Math.floor(t * 8) % 2);
+    if (a.action === 'wait' && side === near) ay = onCall(a) ? 8 : 6 + (Math.floor(t * 3) % 2) * 3;
+    if (a.action === 'dance' && (side > 0) === !!beat) ay = 9;
+    if (a.action === 'stretch') ay = 10;
+    if (a.action === 'mail' && a.arrived && side === near) ay = 6;
+    if (a.ship) ay = 9;
+    if (typing) ay = 4 + ((Math.floor(t * 10) + (side > 0 ? 1 : 0)) % 2) * 2;
+    const [ax, ay2] = toScreen(o, rotY([side * (hw + 1.2 * s), ay * s, typing ? 3 * s : 0], yaw));
+    ctx.globalAlpha = 0.85;
+    rect(side > 0 ? a.mat.dark : a.mat.lit, ax - 1, ay2 - 1, 2, 2);
+    ctx.globalAlpha = 1;
+  }
+
+  // The face, when it is turned our way
+  if (rotY([0, 0, 1], yaw)[2] < 0.3 || s < 0.5) return;
+  // the face is painted on the flat body, so it slides sideways as the ghost turns instead of rotating away
+  const turn = rotY([0, 0, 1], yaw), eyeY = Math.round(head + dome * 0.72);
+  const eye = ex => [o.x + Math.sin(yaw) * hw * 0.4 + ex, eyeY];
+  const blink = (t + a.x) % 4 < 0.12;
+  const ew = turn[2] > 0.72 ? 2 : 1;                       // narrower eyes when it is half turned away,
+  const gap = Math.max(1.4, hw * 0.45 * turn[2]);          // so the two never run into one bar
+  for (const ex of [-gap, gap]) {
+    const [x, y] = eye(ex);
+    if (sleepy || blink) rect(C.night, x - ew / 2, y + 1, ew, 1);
+    else rect(C.night, x - ew / 2, y, ew, 2);
+  }
+  if (a.happy > 0 || a.action === 'dance') { const [x, y] = eye(0); rect(C.night, x - 1, y + 3 * s, 2, 1); } // a little smile
 }
 
 // Sessions with a task list, the most recently updated first

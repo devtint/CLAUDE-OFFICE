@@ -17,7 +17,8 @@ Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packag
 
 - **One agent per session, in its model's colour:** Opus orange, Sonnet blue, Haiku green, Fable
   purple, other models grey. Helpers (subagents) are smaller Claudes in their session's colour, and
-  their session goes to the portal to call them in.
+  their session goes to the portal to call them in. The settings can turn the whole cast into
+  **ghosts**: the same sessions, the same colours and the same work, floating instead of walking.
 - **Two computers** show what the agent at them is doing: `CODE` (Edit, Write) with code being
   typed, `RUN` (Bash) with a terminal and a progress bar, `FIX` after an error, and `DONE` when the
   task is finished. The title bar shows the project. When both are taken, the next agent waits by
@@ -261,6 +262,7 @@ Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes
 | Leave after idle | How long a quiet session stays in the room: 5, 10, 30 or 60 minutes |
 | Claudes at once | 2, 4, 6 or 8 |
 | Cat | Orange tabby, Tuxedo or Calico |
+| Claudes | Little Claudes or Ghosts. Ghosts keep the model colours, the antenna and everything they do — they just hover, ripple at the hem and let the room show through. `?claudes=ghost` previews them without saving it |
 | Plant | Leafy plant, Cactus or Aloe. The growth lives apart from this (in `~/.claude/office-plant.json`), so changing the plant keeps the same points, the same stage and the same height. `?plant=cactus` previews one without saving it |
 | Show subagents | Helpers as small Claudes, or hidden |
 | Check for updates | Once a day the office asks GitHub whether a newer version exists, sending only the commit id it is on. When there is one, the Raspberry Pi blinks NEW and the settings show what changed with a button to copy the update prompt. Turn it off here |

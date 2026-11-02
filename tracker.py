@@ -95,6 +95,7 @@ DEFAULTS = {
     'wall': 'view',        # the wall: 'view' follows the view, or one view's wall
     'cat': 'orange',       # the cat's coat: orange tabby, tuxedo or calico
     'plant': 'leafy',      # the plant in the pot: leafy, cactus or aloe (growth is kept apart, in office-plant.json)
+    'claudes': 'claude',   # what the sessions look like in the room: little Claudes or ghosts
     'sound': False,        # ambient sound: rain, typing, purring
     'volume': 100,         # percent, 10 to 200
     'updates': True,       # ask GitHub once a day whether a newer version exists
@@ -119,7 +120,7 @@ DEFAULTS = {
     'show_season': True,   # holiday and season decorations
 }
 VIEWS = ('city', 'mountain', 'ice', 'shore', 'village', 'desert', 'forest', 'random')
-CHOICES = {'units': ('C', 'F'), 'idle': (5, 10, 30, 60), 'max': (2, 4, 6, 8), 'view': VIEWS, 'cat': ('orange', 'tuxedo', 'calico'), 'plant': ('leafy', 'cactus', 'aloe'),
+CHOICES = {'units': ('C', 'F'), 'idle': (5, 10, 30, 60), 'max': (2, 4, 6, 8), 'view': VIEWS, 'cat': ('orange', 'tuxedo', 'calico'), 'plant': ('leafy', 'cactus', 'aloe'), 'claudes': ('claude', 'ghost'),
            'wall': ('view',) + VIEWS[:-1], 'volume': tuple(range(10, 201, 10)),
            'fps': (60, 30, 20, 15), 'brightness': tuple(range(30, 101, 10))}
 _settings = {'mtime': None, 'data': dict(DEFAULTS)}
