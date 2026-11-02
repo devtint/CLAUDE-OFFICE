@@ -10,7 +10,8 @@ Code session is a little 3D Claude agent. Agents arrive through a portal when a 
 leave through it when it ends; the portal only appears then, opened by the office cat (orange tabby,
 tuxedo or calico, picked in the settings). The cat also sits on idle keyboards, curls up beside sleeping Claudes and follows them
 around. A plant by the window grows with finished turns, passing tests, commits and pushes
-(kept in `~/.claude/office-plant.json`). Optional ambient sound (rain, typing, purring) is in the
+(kept in `~/.claude/office-plant.json`); the settings pick which plant it is — leafy, cactus or
+aloe — and swapping it keeps the growth it already has. Optional ambient sound (rain, typing, purring) is in the
 settings, and so are switches to hide the plant, tea cup, fish tank, cat, clock, calendar, Today
 board, mailbox, rug, view decorations and moth. For a dedicated screen the settings also have a
 frame rate (30 fps by default, lower uses less CPU, resting at 10 fps while no Claude works), a brightness bar, pixel shift against OLED burn-in (on by default), keep the screen awake and full screen

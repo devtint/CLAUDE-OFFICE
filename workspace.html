@@ -92,6 +92,8 @@
     <label>Leave after idle <select id="sIdle"><option value="5">5 min</option><option value="10">10 min</option><option value="30">30 min</option><option value="60">60 min</option></select></label>
     <label>Claudes at once <select id="sMax"><option>2</option><option>4</option><option>6</option><option>8</option></select></label>
     <label>Cat <select id="sCat"><option value="orange">Orange tabby</option><option value="tuxedo">Tuxedo</option><option value="calico">Calico</option></select></label>
+    <label>Plant <select id="sPlant"><option value="leafy">Leafy plant</option><option value="cactus">Cactus</option><option value="aloe">Aloe</option></select></label>
+    <div class="note">Changing the plant keeps the growth it has.</div>
     <label class="check"><input type="checkbox" id="sHelpers"> Show subagents</label>
     <label class="check"><input type="checkbox" id="sUpdates"> Check for updates once a day</label>
     <label class="check"><input type="checkbox" id="sSound"> Ambient sound (rain, typing, purring)</label>
@@ -480,7 +482,7 @@ const cable = makeRope(298, 58, 311, 85, 12, 40);
 
 // Settings, the same as DEFAULTS in tracker.py; loaded from /settings (see the Settings panel below)
 const DEFAULTS = { tz: 'Asia/Bangkok', label: 'BKK', city: 'Bangkok', lat: 13.75, lon: 100.5, weather: true, units: 'C',
-  clock24: true, alerts: false, idle: 10, max: 8, helpers: true, calm: false, view: 'city', wall: 'view', cat: 'orange', sound: false, volume: 100, updates: true,
+  clock24: true, alerts: false, idle: 10, max: 8, helpers: true, calm: false, view: 'city', wall: 'view', cat: 'orange', plant: 'leafy', sound: false, volume: 100, updates: true,
   fps: 30, rest: true, brightness: 100, shift: true, awake: false, full: false,
   show_plant: true, show_cup: true, show_tank: true, show_cat: true, show_clock: true, show_calendar: true, show_today: true, show_mailbox: true, show_rug: true, show_touches: true, show_moth: true, show_season: true };
 const cfg = Object.assign({}, DEFAULTS);
@@ -1479,6 +1481,7 @@ function fillPanel() {
   $('sWall').value = cfg.wall;
   $('sVolume').value = String(cfg.volume);
   $('sCat').value = cfg.cat;
+  $('sPlant').value = cfg.plant;
   $('sSound').checked = cfg.sound;
   $('sUpdates').checked = cfg.updates;
   $('sFps').value = String(cfg.fps);
@@ -1572,6 +1575,7 @@ function bindSettings() {
   on('sWall', 'change', e => { cfg.wall = e.value; });
   on('sVolume', 'input', e => { cfg.volume = +e.value; });
   on('sCat', 'change', e => { cfg.cat = e.value; });
+  on('sPlant', 'change', e => { cfg.plant = e.value; }); // only the look changes: the growth is the server's
   on('sSound', 'change', e => { cfg.sound = e.checked; soundOn(); });
   on('sUpdates', 'change', e => { cfg.updates = e.checked; });
   on('sFps', 'change', e => { cfg.fps = +e.value; });
@@ -2426,8 +2430,17 @@ function drawFestiveSky(t, sk) {
 }
 
 // ---------- The plant by the window: it grows with finished turns, passing tests, commits and pushes ----------
+// Which plant stands in the pot (leafy, cactus or aloe) is a setting, and only a change of look: the
+// growth itself is kept server-side in ~/.claude/office-plant.json and read from /state, so swapping
+// plants keeps the same points, the same stage and the same height. Nothing about growth is stored here.
 
 const PLANT = { x: 30, pot: 152 };
+const PLANT_KINDS = ['leafy', 'cactus', 'aloe'];
+// The plant from the settings; ?plant=cactus previews one without saving it
+const plantKind = () => {
+  const k = params.get('plant') || cfg.plant;
+  return PLANT_KINDS.includes(k) ? k : 'leafy';
+};
 
 // How the plant looks from its points: size from the last 30 days, flowers on a big day, droops when left alone
 function plantLook() {
@@ -2439,12 +2452,47 @@ function plantLook() {
   };
 }
 
+// How tall it stands, in pixels. Every plant uses this one formula, so changing the plant in the
+// settings never changes how grown it looks: the same stage is the same height in the same pot.
+const plantHeight = stage => 6 + stage * 4;
+// What the pointer has to hit to read the plant's card (wide enough for the cactus arms and aloe blades)
+const plantBox = stage => [PLANT.x - 9, PLANT.pot - plantHeight(stage) - 2, PLANT.x + 9, PLANT.pot + 9];
+
+// Greens for each plant as [light, dark], going pale and then brown as it gets thirsty
+const PLANT_INK = {
+  leafy:  [[V.leaf[0], V.pine[0]], ['#8a9a48', '#5e6e34'], ['#9a7a3c', '#6e5428']],
+  cactus: [['#5f9e46', '#2b5730'], ['#7f9a40', '#4a6a2c'], ['#8f8440', '#5a5026']],
+  aloe:   [['#74b07a', '#2f6a4e'], ['#8da858', '#556f3c'], ['#9a8a46', '#62552c']]
+};
+const PETALS = [C.amber, C.white, '#f09aa6', C.amber];
+
 function drawPlant(t) {
-  const { stage, flowers, droop } = plantLook(), { x, pot } = PLANT;
-  const h = 6 + stage * 4;
-  const leaf = droop === 2 ? ['#9a7a3c', '#6e5428'] : droop === 1 ? ['#8a9a48', '#5e6e34'] : [V.leaf[0], V.pine[0]];
+  const look = plantLook(), kind = plantKind(), tint = PLANT_INK[kind][look.droop];
+  if (kind === 'cactus') drawPotCactus(t, look, tint);
+  else if (kind === 'aloe') drawAloe(t, look, tint);
+  else drawLeafy(t, look, tint);
+  drawPot(PLANT.x, PLANT.pot, kind);
+}
+
+// The pot: the same terracotta whichever plant is in it, with a little gravel for the cactus
+function drawPot(x, pot, kind) {
+  rect('#b0573c', x - 6, pot, 13, 2);
+  rect('#8a4430', x - 5, pot + 2, 11, 6);
+  rect('#b0573c', x - 4, pot + 3, 1, 4);
+  rect(C.night, x - 5, pot + 8, 11, 1);
+  if (kind === 'cactus') { px('#c8955a', x - 4, pot - 1); px('#c0894e', x + 3, pot - 1); px('#c8955a', x + 4, pot - 1); }
+}
+
+// A blossom: four petals round a warm middle
+function blossom(c, fx, fy) {
+  px(c, fx - 1, fy); px(c, fx + 1, fy); px(c, fx, fy - 1); px(c, fx, fy + 1); px(C.amber, fx, fy);
+}
+
+// Leafy: a stem with leaves in pairs, leaning over when thirsty
+function drawLeafy(t, { stage, flowers, droop }, leaf) {
+  const { x, pot } = PLANT, h = plantHeight(stage);
   const sway = k => Math.sin(t * 0.8) * k / h * 1.5 + (droop ? k * k / h / h * 3 * droop : 0); // leans over when thirsty
-  for (let k = 0; k < h; k++) px(V.pine[0], x + Math.round(sway(k)), pot - 1 - k);
+  for (let k = 0; k < h; k++) px(leaf[1], x + Math.round(sway(k)), pot - 1 - k);
   for (let k = 4; k < h; k += 4) { // leaves in pairs up the stem
     const sx = x + Math.round(sway(k)), y = pot - 1 - k, side = (k / 4) % 2 ? 1 : -1, dy = droop ? 1 : 0;
     const big = k > h / 3 && stage > 3 ? 1 : 0, at = (dx, yy, w, c) => rect(c, side > 0 ? sx + dx : sx - dx - w + 1, yy, w, 1);
@@ -2457,19 +2505,67 @@ function drawPlant(t) {
   rect(leaf[0], tx - 1, ty - 1, 3, 1);
   for (let i = 0; i < flowers; i++) { // blossoms on a busy day
     const k = i === 0 ? h : h - 4 - i * 6, fx = x + Math.round(sway(k)) + (i % 2 ? 4 : -4) * (i > 0), fy = pot - k - 2;
-    const c = [C.amber, C.white, '#f09aa6', C.amber][i];
-    px(c, fx - 1, fy); px(c, fx + 1, fy); px(c, fx, fy - 1); px(c, fx, fy + 1); px(C.amber, fx, fy);
+    blossom(PETALS[i], fx, fy);
   }
-  // the pot
-  rect('#b0573c', x - 6, pot, 13, 2);
-  rect('#8a4430', x - 5, pot + 2, 11, 6);
-  rect('#b0573c', x - 4, pot + 3, 1, 4);
-  rect(C.night, x - 5, pot + 8, 11, 1);
+}
+
+// Cactus: a ribbed column that puts out an arm at every few stages, blooming on the crown and the tips
+function drawPotCactus(t, { stage, flowers, droop }, skin) {
+  const { x, pot } = PLANT, h = plantHeight(stage);
+  const w = stage > 1 ? 3 : 2, left = x - (w > 2 ? 1 : 0);
+  const tips = [[x, pot - h - 2]]; // where a blossom can sit: the crown first, then each arm
+  for (let k = 0; k < h; k++) {    // the trunk, lit down the left rib and shaded down the right
+    const y = pot - 1 - k;
+    rect(skin[0], left, y, w, 1);
+    px(skin[1], left + w - 1, y);
+    if (w > 2 && k % 3 === 1) px(skin[1], left + 1, y); // the ribs
+  }
+  px(skin[0], x, pot - h - 1); // a rounded crown
+  const arms = stage >= 8 ? [[1, 0.40], [-1, 0.26], [1, 0.66]] : stage >= 5 ? [[1, 0.40], [-1, 0.26]] : stage >= 3 ? [[1, 0.40]] : [];
+  for (const [side, at] of arms) {
+    const run = 2 + Math.floor(stage / 4), rise = 3 + Math.floor(stage / 2);
+    const y = pot - 2 - Math.round(h * at) + droop; // the arms sag a pixel or two when thirsty
+    const ax = side > 0 ? left + w : left - run - 1;
+    rect(skin[0], ax, y, run + 1, 2);               // out from the trunk
+    rect(skin[1], ax, y + 1, run + 1, 1);
+    const tx = side > 0 ? ax + run - 1 : ax;
+    rect(skin[0], tx, y - rise, 2, rise + 1);       // and then up
+    px(skin[1], tx + 1, y - rise + 1);
+    tips.push([tx, y - rise - 1]);
+  }
+  for (let k = 2; k < h; k += 4) { px('#c7d6b4', left - 1, pot - 1 - k); px('#c7d6b4', left + w, pot - 1 - k); } // spines
+  for (let i = 0; i < Math.min(flowers, tips.length); i++) blossom(PETALS[i], tips[i][0], tips[i][1]);
+}
+
+// Aloe: thick blades curving out of the pot, with a flower spike on a busy day
+function drawAloe(t, { stage, flowers, droop }, blade) {
+  const { x, pot } = PLANT, h = plantHeight(stage), base = pot - 1;
+  const n = 5 + 2 * Math.min(3, Math.floor(stage / 2)); // always odd, so one blade stands straight up
+  for (let i = 0; i < n; i++) {
+    const s = (i / (n - 1)) * 2 - 1;                    // -1 at the far left to 1 at the far right
+    const out = s * (3.5 + stage * 1.15);               // how far its tip reaches out
+    const len = h * (1 - 0.4 * Math.abs(s));            // the middle blades are the tallest
+    const wob = Math.sin(t * 0.7 + i * 1.3) * 0.9 * (1 - Math.abs(s) * 0.4);
+    const steps = Math.max(4, Math.round(len * 2));
+    const front = Math.abs(s) < 0.55; // the middle blades stand in front, the outer ones behind
+    for (let j = 0; j <= steps; j++) {                  // each blade goes up first, then curves out
+      const f = j / steps;
+      const bx = Math.round(x + (out + wob) * Math.pow(f, 1.6));
+      const by = Math.round(base - len * f * (1.1 - 0.1 * f) + droop * len * 0.13 * f * f); // the tips sink as it dries out
+      px(front ? blade[0] : blade[1], bx, by);
+      if (f < 0.55) px(blade[1], bx + (s < 0 ? 1 : -1), by); // thicker and shaded near the pot
+    }
+  }
+  if (flowers) { // the spike: one stalk out of the middle, with a bell for each flower
+    const top = base - h - 3;
+    for (let y = base - 3; y >= top; y--) px(blade[1], x + 1, y);
+    for (let i = 0; i < flowers; i++) blossom(PETALS[i], x + 1 + (i % 2 ? 2 : -2), top + 1 + i * 3);
+  }
 }
 
 function showPlant(e) {
   const p = world.plant || { total: 0, today: 0 }, d = world.today;
-  card.replaceChildren(el('div', 'name', 'The plant'),
+  card.replaceChildren(el('div', 'name', 'The ' + ({ cactus: 'cactus', aloe: 'aloe' }[plantKind()] || 'plant')),
     el('div', 'state', 'Grows with finished turns, passing tests, commits and pushes'),
     el('div', 'step', `Today ${p.today} points` + (d ? ` (${d.done} done, ${d.pass} tests, ${d.commit} commits, ${d.push} pushes)` : '')
       + `  |  30 days ${p.total}` + (p.idle >= 3 ? `  |  thirsty: ${p.idle} days without work` : '')));
@@ -3351,7 +3447,7 @@ canvas.addEventListener('pointerdown', e => {
   }
   else if (shown('cat') && Math.abs(x - cat.x) < 9 && y > cat.base - 16 && y < cat.base + 3) { if (cat.action === 'sleep') pop('!', cat.x - 1, cat.base - 22, C.amber); petCat(); }
   else if (shown('tank') && hit(TANK.x - 1, TANK.y, TANK.x + TANK.w, TANK.y + TANK.h)) { feedFish(); tapTank(x); }
-  else if (shown('plant') && hit(PLANT.x - 7, PLANT.pot - 6 - plantLook().stage * 4, PLANT.x + 7, PLANT.pot + 9)) showPlant(e);
+  else if (shown('plant') && hit(...plantBox(plantLook().stage))) showPlant(e);
   else if (hit(PORTAL.x - PORTAL.rx, PORTAL.y - PORTAL.ry, PORTAL.x + PORTAL.rx, PORTAL.y + PORTAL.ry)) {
     if (world.portal.open > 0) world.portalFlare = 1; else world.portal.peek = 9; // asks the cat to open it
   }

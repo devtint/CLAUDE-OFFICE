@@ -43,7 +43,9 @@ Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packag
   counts 1 point, each commit 2 and each push 3. Its size comes from the last 30 days, it flowers on a
   big day (20 points or more), droops after 3 days without work and wilts after a week. Claudes water
   it in their free time. Tap it to see today's points. The counts are kept in
-  `~/.claude/office-plant.json`.
+  `~/.claude/office-plant.json`. The settings choose which plant it is — a leafy plant, a cactus
+  that grows arms, or an aloe — and that is only a change of look: the points, the stage and the
+  height stay exactly as they were, so swapping plants never costs you any growth.
 - **Tests, commits and pushes:** a computer's light turns green when its session's tests pass and
   blinks amber when they fail, and the Claude cheers or winces. A push sends the Claude to the
   portal with a parcel ("SENT"). The CODE screen shows the file and the lines changed (+12 -3).
@@ -259,6 +261,7 @@ Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes
 | Leave after idle | How long a quiet session stays in the room: 5, 10, 30 or 60 minutes |
 | Claudes at once | 2, 4, 6 or 8 |
 | Cat | Orange tabby, Tuxedo or Calico |
+| Plant | Leafy plant, Cactus or Aloe. The growth lives apart from this (in `~/.claude/office-plant.json`), so changing the plant keeps the same points, the same stage and the same height. `?plant=cactus` previews one without saving it |
 | Show subagents | Helpers as small Claudes, or hidden |
 | Check for updates | Once a day the office asks GitHub whether a newer version exists, sending only the commit id it is on. When there is one, the Raspberry Pi blinks NEW and the settings show what changed with a button to copy the update prompt. Turn it off here |
 | Ambient sound | Off by default. Rain when it rains in your city (and thunder in storms), soft key clicks while a Claude types, purring when the cat is petted, a meow when it opens the portal. Browsers only play sound after you tap the page once, and it pauses while the page is hidden |
