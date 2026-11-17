@@ -129,6 +129,7 @@ DEFAULTS = {
     'show_calendar': True,
     'show_today': True,
     'show_mailbox': True,
+    'show_usage': True,   # the two hourglasses on the shelf: the 5 hour window and the week
     'show_rug': True,
     'show_touches': True,
     'show_moth': True,

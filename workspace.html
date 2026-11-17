@@ -472,7 +472,7 @@ const clouds = [
 ];
 const runLines = makeLines(42, 64, 40, 0.15);
 
-const world = { update: null, plant: null, portal: { open: 0, go: false, wait: 0, idle: 0, peek: 0 }, piParty: 0, tapped: false, portalFlare: 0, sessions: 0, ready: true, today: null, mailFlag: 0 };
+const world = { update: null, plant: null, usage: null, portal: { open: 0, go: false, wait: 0, idle: 0, peek: 0 }, piParty: 0, tapped: false, portalFlare: 0, sessions: 0, ready: true, today: null, mailFlag: 0 };
 const steam = [];
 const pops = [];
 const drops = [];
@@ -485,11 +485,11 @@ const cable = makeRope(298, 58, 311, 85, 12, 40);
 const DEFAULTS = { tz: 'Asia/Bangkok', label: 'BKK', city: 'Bangkok', lat: 13.75, lon: 100.5, weather: true, units: 'C',
   clock24: true, alerts: false, idle: 10, max: 8, helpers: true, calm: false, view: 'city', wall: 'view', cat: 'orange', plant: 'leafy', claudes: 'claude', sound: false, volume: 100, updates: true,
   fps: 30, rest: true, brightness: 100, shift: true, awake: false, full: false,
-  show_plant: true, show_cup: true, show_tank: true, show_cat: true, show_clock: true, show_calendar: true, show_today: true, show_mailbox: true, show_rug: true, show_touches: true, show_moth: true, show_season: true };
+  show_plant: true, show_cup: true, show_tank: true, show_cat: true, show_clock: true, show_calendar: true, show_today: true, show_mailbox: true, show_usage: true, show_rug: true, show_touches: true, show_moth: true, show_season: true };
 const cfg = Object.assign({}, DEFAULTS);
 // Things in the room that can be hidden in the settings, each with its own switch (show_plant and so on)
 const SHOW = [['plant', 'Plant'], ['cup', 'Tea cup'], ['tank', 'Fish tank'], ['cat', 'Cat'], ['clock', 'Wall clock'],
-  ['calendar', 'Calendar'], ['today', 'Today board'], ['mailbox', 'Mailbox'], ['rug', 'Rug'], ['touches', 'View decorations'], ['moth', 'Moth'], ['season', 'Seasons and holidays']];
+  ['calendar', 'Calendar'], ['today', 'Today board'], ['mailbox', 'Mailbox'], ['usage', 'Limit hourglasses'], ['rug', 'Rug'], ['touches', 'View decorations'], ['moth', 'Moth'], ['season', 'Seasons and holidays']];
 const shown = k => cfg['show_' + k] !== false;
 // Calm mode, also on by itself when the computer asks for less motion
 const lessMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -1406,12 +1406,14 @@ function demoState() {
 const demoToday = () => ({ done: 12, commit: 5, push: 2, pass: 9, fail: 1, top: '#D97757' });
 
 async function poll() {
-  if (params.has('demo')) { world.today = demoToday(); world.plant = { total: 420, today: 46, idle: 0 }; sync(demoState()); setTimeout(poll, 1500); return; }
+  if (params.has('demo')) { world.today = demoToday(); world.plant = { total: 420, today: 46, idle: 0 };
+    world.usage = { five: { pct: 65, resets: Math.floor(Date.now() / 1000) + 2400 }, seven: { pct: 27, resets: Math.floor(Date.now() / 1000) + 3 * 86400 }, read: 3 }; sync(demoState()); setTimeout(poll, 1500); return; }
   try {
     const d = await (await fetch('/state', { cache: 'no-store' })).json();
     world.ready = d.ready !== false;
     world.today = d.today || null;
     world.plant = d.plant || null;
+    world.usage = d.usage || null;
     world.update = d.update || null;
     sync(d.claudes || []);
   } catch (e) {
@@ -2688,7 +2690,7 @@ function drawShelf(t) {
   rect(C.wood, x + w - 8, y + 3, 2, 6);
 
   const reading = agents.some(a => (a.action === 'read' || a.action === 'book') && a.arrived);
-  const books = [[5, 18, C.amber], [4, 15, C.blue], [6, 20, C.white], [4, 16, C.green], [5, 19, C.oak], [4, 14, C.blue], [5, 17, C.amber]];
+  const books = [[5, 18, C.amber], [6, 20, C.white], [5, 19, C.oak], [5, 17, C.amber]];
   let bx = x + 3;
   books.forEach(([bw, bh, c], i) => {
     const out = reading && i === Math.floor(t / 3) % books.length ? 3 : 0; // a book pulled out while someone reads
@@ -2699,6 +2701,7 @@ function drawShelf(t) {
   });
   for (let i = 0; i < 14; i++) rect(C.green, bx + 1 + Math.floor(i / 4), y - 1 - i, 4, 1);
 
+  if (shown('usage')) drawHourglasses(t);
   drawRaspberryPi(x + 58, y, t);
   drawCable();
 }
@@ -2722,6 +2725,83 @@ function drawRaspberryPi(x, y, t) {
   px(hash(Math.floor(t * (party ? 30 : 12))) > 0.45 ? C.green : C.navy, x + 16, y - 3);
   const jobs = Math.min(4, agents.reduce((n, a) => n + (a.info.background || 0), 0)); // background commands running
   for (let i = 0; i < jobs; i++) if (Math.sin(t * 4 + i * 1.7) > -0.3) dot(C.green, x + 12 + i, y - 5.5);
+}
+
+// ---------- The two hourglasses on the shelf: the 5 hour window and the week ----------
+// Claude Code gives a status line how much of each plan limit is used and when it resets, and
+// office-statusline.py keeps those four numbers in ~/.claude/office-usage.json for the room (see
+// "install.py --statusline"). The sand that has run down is what you have used, so a full top bulb
+// is a window that has just reset. With no status line installed both glasses stand empty.
+
+const GLASS = { base: 61, edge: '#46618a', five: { x: 259, w: 7, h: 9 }, seven: { x: 268, w: 9, h: 13 } };
+const glassBox = () => [GLASS.five.x - 1, GLASS.base - 16, GLASS.seven.x + GLASS.seven.w, GLASS.base + 2];
+
+function drawHourglasses(t) {
+  const u = world.usage || {};
+  drawGlass(t, GLASS.five, u.five);
+  drawGlass(t, GLASS.seven, u.seven);
+}
+
+// One hourglass: a wooden frame round a glass waist, with the sand split by how much of the window
+// is used. What is left sits in the top bulb, what is spent has run down into the bottom one.
+function drawGlass(t, g, win) {
+  const { x, w, h } = g, base = GLASS.base, top = base - h - 1;
+  const half = (h - 1) / 2, cx = x + (w - 1) / 2, max = (w - 1) / 2 - 1;
+  rect(C.oak, x, top, w, 1);          // the cap
+  rect(C.wood, x, base, w, 1);        // the foot
+  rect(C.wood, x, top + 1, 1, h);     // a post down each side, so the shape reads against any wall
+  rect(C.wood, x + w - 1, top + 1, 1, h);
+  px(C.oak, x + 1, top);
+  const widths = [];
+  for (let r = 0; r < h; r++) {       // the glass: widest at the ends, one pixel at the neck
+    const iw = 1 + 2 * Math.round(max * Math.abs(r - half) / half);
+    widths.push(iw);
+    rect(C.night, cx - (iw - 1) / 2, top + 1 + r, iw, 1);
+    if (iw > 1) {                     // the curve of the bulb, so an empty glass is still an hourglass
+      px(GLASS.edge, cx - (iw - 1) / 2, top + 1 + r);
+      px(GLASS.edge, cx + (iw - 1) / 2, top + 1 + r);
+    }
+  }
+  px(C.blue, cx - (widths[0] - 1) / 2, top + 1); // a glint on the glass
+
+  if (!win) return;                   // no numbers yet: the glass stands empty
+  const used = Math.max(0, Math.min(1, win.pct / 100));
+  const sand = used >= 0.85 ? '#d9674f' : used >= 0.6 ? '#e0a040' : C.amber;
+  const fill = (r, narrow) => {
+    const iw = Math.max(1, widths[r] - (narrow ? 2 : 0));
+    rect(sand, cx - (iw - 1) / 2, top + 1 + r, iw, 1);
+  };
+  const up = Math.round((1 - used) * half);   // what is left, resting on the neck
+  for (let i = 0; i < up; i++) fill(half - 1 - i, i === up - 1 && up < half);
+  const down = Math.round(used * half);       // what has run through, piled on the floor
+  for (let i = 0; i < down; i++) fill(h - 1 - i, i === down - 1 && down < half);
+  if (used > 0 && used < 1 && !calm())        // a grain on its way down
+    px(sand, cx, top + 1 + half + (Math.floor(t * 6) % 2));
+}
+
+function showUsage(e) {
+  const u = world.usage, line = (win, name) => !win ? `${name}  --` :
+    `${name}  ${Math.round(win.pct)}% used  |  ${resetWord(win.resets)}`;
+  if (!u || (!u.five && !u.seven))
+    card.replaceChildren(el('div', 'name', 'The hourglasses'),
+      el('div', 'state', 'They run on the plan limits, which Claude Code only gives to a status line'),
+      el('div', 'step', 'Empty so far: run  python install.py --statusline  in the office folder, then start a session'));
+  else
+    card.replaceChildren(el('div', 'name', 'Plan limits'),
+      el('div', 'state', line(u.five, 'Session (5 hours)')),
+      el('div', 'step', line(u.seven, 'Week') + (u.read > 900 ? `  |  last reported ${Math.round(u.read / 60)} min ago` : '')));
+  card.style.display = 'block';
+  card.style.left = Math.min(e.clientX + 12, innerWidth - 270) + 'px';
+  card.style.top = Math.min(e.clientY + 14, innerHeight - 90) + 'px';
+  setTimeout(() => { card.style.display = 'none'; }, 4000);
+}
+
+// "resets 17:40" for today, "resets SUN 16:00" when the window runs past midnight
+function resetWord(ts) {
+  if (!ts) return 'reset just now';
+  const d = new Date(ts * 1000);
+  const hm = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: !cfg.clock24 });
+  return 'resets ' + (d.toDateString() === new Date().toDateString() ? hm : DAYS[d.getDay()] + ' ' + hm);
 }
 
 function drawCable() {
@@ -3529,6 +3609,7 @@ canvas.addEventListener('pointerdown', e => {
   else if (shown('cat') && Math.abs(x - cat.x) < 9 && y > cat.base - 16 && y < cat.base + 3) { if (cat.action === 'sleep') pop('!', cat.x - 1, cat.base - 22, C.amber); petCat(); }
   else if (shown('tank') && hit(TANK.x - 1, TANK.y, TANK.x + TANK.w, TANK.y + TANK.h)) { feedFish(); tapTank(x); }
   else if (shown('plant') && hit(...plantBox(plantLook().stage))) showPlant(e);
+  else if (shown('usage') && hit(...glassBox())) showUsage(e);
   else if (hit(PORTAL.x - PORTAL.rx, PORTAL.y - PORTAL.ry, PORTAL.x + PORTAL.rx, PORTAL.y + PORTAL.ry)) {
     if (world.portal.open > 0) world.portalFlare = 1; else world.portal.peek = 9; // asks the cat to open it
   }
