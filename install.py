@@ -115,12 +115,13 @@ def linux(folder, remove):
 
 
 # ---------- Claude Code hooks ----------
-# The hook runs only on notifications (a permission prompt, or waiting for input) and when a turn
-# finishes. It writes a tiny file the tracker reads; it never calls Claude, so it costs no tokens.
+# The hook runs only when a session starts or ends, on notifications (a permission prompt, or waiting
+# for input), when a turn finishes or stops on an API error, and when a helper starts or stops. It writes a tiny file the tracker reads; it never calls Claude, so it costs no tokens.
 
 SETTINGS = os.path.join(os.path.expanduser('~'), '.claude', 'settings.json')
 HOOK_SCRIPT = os.path.join(HERE, 'office-hook.py')
-HOOK_EVENTS = ('Notification', 'Stop')
+HOOK_EVENTS = ('SessionStart', 'SessionEnd', 'Notification', 'Stop', 'StopFailure',
+               'SubagentStart', 'SubagentStop')
 MARKER = os.path.join(os.path.expanduser('~'), '.claude', 'office-hooks', '.installed')
 
 
