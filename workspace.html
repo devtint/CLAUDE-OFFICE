@@ -899,7 +899,7 @@ function updateCat(dt, t) {
 const agents = [];
 
 // Body colour by model, straight from /state: Opus orange, Sonnet blue, Haiku green, Fable purple,
-// other models grey. The shaded sides use the same colour, darker.
+// Mythos teal, other models grey. The shaded sides use the same colour, darker.
 function modelMat(colour) {
   const lit = /^#[0-9a-f]{6}$/i.test(colour || '') ? colour : '#D97757';
   const n = parseInt(lit.slice(1), 16), ch = k => Math.round(((n >> k) & 255) * 0.62);

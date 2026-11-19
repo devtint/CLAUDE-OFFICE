@@ -35,6 +35,7 @@ AMBER = '#e0a43a'
 RED = '#e5484d'
 MODEL_COLOURS = {
     'opus': '#D97757', 'sonnet': '#6A9BCC', 'haiku': '#7FA36B', 'fable': '#B08AD9',
+    'mythos': '#4FA3A5',
 }
 OTHER_COLOUR = '#9a948a'
 STATE_WORDS = {'working': 'Working', 'thinking': 'Thinking', 'waiting': 'May need you',
@@ -48,6 +49,9 @@ TOOL_WORDS = {
     'SubagentHandback': 'Reporting back', 'ToolSearch': 'Loading tools', 'Skill': 'Using a skill',
     'Agent': 'Calling a helper', 'Task': 'Calling a helper', 'Artifact': 'Publishing a page',
     'AskUserQuestion': 'Asking you a question', 'ExitPlanMode': 'Waiting for you to approve a plan',
+    'MultiEdit': 'Writing code', 'EnterPlanMode': 'Making a plan', 'TodoWrite': 'Updating the task list',
+    'TaskCreate': 'Updating the task list', 'TaskUpdate': 'Updating the task list', 'TaskList': 'Checking the task list',
+    'Monitor': 'Watching a process', 'ScheduleWakeup': 'Setting a reminder', 'SendMessage': 'Messaging a helper',
 }
 PAST_WORDS = {
     'Bash': 'Ran a command', 'PowerShell': 'Ran a command',
@@ -57,11 +61,14 @@ PAST_WORDS = {
     'Agent': 'Called a helper', 'Task': 'Called a helper', 'Artifact': 'Published a page',
     'SubagentHandback': 'Reported back', 'ToolSearch': 'Loaded tools', 'Skill': 'Used a skill',
     'AskUserQuestion': 'Asked you', 'ExitPlanMode': 'Shared a plan',
+    'MultiEdit': 'Edited', 'EnterPlanMode': 'Made a plan', 'TodoWrite': 'Updated the task list',
+    'TaskCreate': 'Updated the task list', 'TaskUpdate': 'Updated the task list', 'TaskList': 'Checked the task list',
+    'Monitor': 'Watched a process', 'ScheduleWakeup': 'Set a reminder', 'SendMessage': 'Messaged a helper',
 }
-NO_COLON = ('Edit', 'Write', 'NotebookEdit', 'Read')  # 'Edited app.js', not 'Edited: app.js'
+NO_COLON = ('Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Read')  # 'Edited app.js', not 'Edited: app.js'
 KINDS = {
     'Bash': 'Commands', 'PowerShell': 'Commands', 'Edit': 'Edits', 'Write': 'Edits', 'NotebookEdit': 'Edits',
-    'Read': 'Reads', 'Grep': 'Searches', 'Glob': 'Searches', 'WebSearch': 'Web', 'WebFetch': 'Web',
+    'MultiEdit': 'Edits', 'Read': 'Reads', 'Grep': 'Searches', 'Glob': 'Searches', 'WebSearch': 'Web', 'WebFetch': 'Web',
     'Agent': 'Helpers', 'Task': 'Helpers',
 }
 # tools that stop and wait for you to answer, so the session needs you straight away
@@ -211,12 +218,21 @@ def kind_of(name):
 
 
 def model_info(model):
-    """'claude-opus-5-5' -> ('Opus 5.5', colour)."""
-    m = re.match(r'claude-([a-z]+)((?:-\d{1,2})*)', model or '')
-    if not m:
-        return 'Claude', OTHER_COLOUR
-    family = m.group(1)
-    version = '.'.join(p for p in m.group(2).split('-') if p)
+    """'claude-opus-5-5' -> ('Opus 5.5', colour).
+
+    Also reads dated IDs ('claude-haiku-4-5-20251001'), Vertex IDs ('claude-opus-4-5@20251101'),
+    Bedrock IDs ('us.anthropic.claude-opus-5-5'), context suffixes ('claude-sonnet-5-5[1m]'),
+    fast deployments ('claude-opus-5-5-fast') and the older order ('claude-3-5-sonnet-20241022').
+    """
+    m = re.search(r'claude-([a-z]+)((?:-\d{1,2}(?!\d))*)', model or '')
+    if m:
+        family, digits = m.group(1), m.group(2)
+    else:
+        m = re.search(r'claude-((?:\d{1,2}-)+)([a-z]+)', model or '')
+        if not m:
+            return 'Claude', OTHER_COLOUR
+        family, digits = m.group(2), m.group(1)
+    version = '.'.join(p for p in digits.split('-') if p)
     name = family.capitalize() + (' ' + version if version else '')
     return name, MODEL_COLOURS.get(family, OTHER_COLOUR)
 
@@ -420,7 +436,7 @@ class Session:
                 self.notice(name, inp, x.get('id'), ts)
                 self.kinds[kind_of(name)] += 1
                 path = inp.get('file_path') or inp.get('notebook_path')
-                if path and name in ('Edit', 'Write', 'NotebookEdit'):
+                if path and name in ('Edit', 'Write', 'MultiEdit', 'NotebookEdit'):
                     self.files[path] = ts
                 if name in ('Agent', 'Task'):
                     self.agents.append((ts, inp.get('description') or '', inp.get('subagent_type') or '', x.get('id') or ''))

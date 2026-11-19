@@ -16,7 +16,7 @@ Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packag
 ## Features
 
 - **One agent per session, in its model's colour:** Opus orange, Sonnet blue, Haiku green, Fable
-  purple, other models grey. Helpers (subagents) are smaller Claudes in their session's colour, and
+  purple, Mythos teal, other models grey. Helpers (subagents) are smaller Claudes in their session's colour, and
   their session goes to the portal to call them in. The settings can turn the whole cast into
   **ghosts**: the same sessions, the same colours and the same work, floating instead of walking.
 - **Two computers** show what the agent at them is doing: `CODE` (Edit, Write) with code being
