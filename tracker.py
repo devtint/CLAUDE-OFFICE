@@ -73,6 +73,14 @@ KINDS = {
 }
 # tools that stop and wait for you to answer, so the session needs you straight away
 ASK_TOOLS = ('AskUserQuestion', 'ExitPlanMode')
+# a turn that stopped on an API error (the StopFailure hook), in words for the room
+FAIL_WORDS = {
+    'rate_limit': 'Hit the rate limit', 'billing_error': 'Out of credit', 'account_on_hold': 'Account on hold',
+    'authentication_failed': 'Signed out', 'oauth_org_not_allowed': 'Signed out',
+    'cloud_credential_error': 'Cloud sign-in failed', 'server_error': 'Claude is overloaded',
+    'model_not_found': 'Model not found', 'invalid_request': 'Request was refused',
+    'max_output_tokens': 'Reply too long',
+}
 # a transcript line worth parsing: a user or assistant message, compact or spaced JSON
 MESSAGE_LINE = re.compile(rb'"type"\s*:\s*"(?:user|assistant)"')
 # commands worth noticing: tests (pass or fail), commits and pushes
@@ -356,16 +364,21 @@ class Session:
         self.background = []  # when background commands started
         self.streak = 0       # tool errors in a row
         self.hook = None      # the latest note from the office hook, if installed
+        self.woke = 0         # when the SessionStart hook said this session started or resumed
+        self.ended = 0        # when the SessionEnd hook said this session ended
+        self.stopped = 0      # for a helper: when the SubagentStop hook said it finished
 
     def update(self):
         try:
             st = os.stat(self.path)
         except OSError:
             return
-        self.mtime = st.st_mtime
+        self.mtime = max(st.st_mtime, self.woke)  # a resumed session counts as fresh
         if st.st_size < self.offset:  # the file was rewritten: read it again
+            woke = self.woke
             self.__init__(self.path, self.parent)
-            self.mtime = st.st_mtime
+            self.woke = woke
+            self.mtime = max(st.st_mtime, woke)
             if self.parent:
                 read_meta(self)
         if st.st_size == self.offset:
@@ -493,6 +506,17 @@ class Session:
         """'Opus 5.5' for a session, the helper type (like 'Explore') for a helper."""
         return (self.label or 'Helper') if self.helper else model_info(self.model)[0]
 
+    def gone(self):
+        """The SessionEnd hook said it ended, and nothing was written after that."""
+        return bool(self.ended) and self.ended >= self.mtime - 2
+
+    def failure(self):
+        """'Hit the rate limit' while the latest turn stopped on an API error (the StopFailure hook)."""
+        h = self.hook
+        if h and h.get('event') == 'StopFailure' and h.get('time', 0) >= self.mtime - 2:
+            return FAIL_WORDS.get(h.get('type'), 'API error')
+        return ''
+
     def context_text(self):
         # only the tokens used: transcripts do not record the window size, so no percentage
         return f'{short(self.context)} tokens' if self.context else ''
@@ -506,17 +530,26 @@ class Session:
         d = self.last
         if self.helper and self.tool_id and self.tool_id in self.done_ids:
             return 'done', ''
+        if self.helper and self.stopped and self.stopped >= self.mtime - 2:  # the SubagentStop hook
+            return 'done', ''
+        if not d and self.woke and age < ACTIVE_SECS:  # just started, no message yet: awake, waiting for you
+            return 'done', ''
         if not d or age > ACTIVE_SECS:
             return 'off', ''
         # the office hook knows for sure, as long as nothing was written after it
         h = self.hook
         if h and h.get('time', 0) >= self.mtime - 2:
+            event = h.get('event')
             text = (str(h.get('type', '')) + ' ' + str(h.get('message', ''))).lower()
-            if h.get('event') == 'Notification' and 'permission' in text:
+            if event == 'Notification' and 'permission' in text:
                 items = (d.get('message') or {}).get('content')
                 tools = [x for x in (items if isinstance(items, list) else []) if x.get('type') == 'tool_use']
                 return 'waiting', tools[-1].get('name', '') if tools else ''
-            if h.get('event') == 'Stop' or 'waiting for your input' in text or 'idle' in text:
+            if event == 'StopFailure':  # rate limit, overloaded, signed out: it stopped and needs a look
+                return ('error' if age < ACTIVE_SECS else 'off'), ''
+            if event == 'SessionStart' and h.get('time', 0) >= self.mtime:  # nothing since: waiting for you
+                return 'done', ''
+            if event == 'Stop' or (event == 'Notification' and ('waiting for your input' in text or 'idle' in text)):
                 return 'done', ''
         msg = d.get('message') or {}
         content = msg.get('content')
@@ -647,7 +680,7 @@ class Tracker(threading.Thread):
                             self.scan_helpers(s, now, loose.get(path, []))
                 except Exception:
                     log_error()
-        self.read_hooks(now)
+        fresh |= self.read_hooks(now)
         with self.lock:
             # forget sessions not written for a day and a half (and their helpers), so a server left
             # running for weeks stays small
@@ -657,7 +690,7 @@ class Tracker(threading.Thread):
                 del self.sessions[p]
             self.parents = {p: v for p, v in self.parents.items() if p in fresh}
             mains = sorted((s for s in self.sessions.values() if not s.helper), key=lambda s: -s.mtime)
-            active = [s for s in mains if now - s.mtime < ACTIVE_SECS][:MAX_PETS]
+            active = [s for s in mains if now - s.mtime < ACTIVE_SECS and not s.gone()][:MAX_PETS]
             helpers = []
             for s in self.sessions.values():
                 if s.helper and s.parent in active:
@@ -672,13 +705,17 @@ class Tracker(threading.Thread):
             self.snapshot = (active + helpers[:MAX_HELPERS], mains[0] if mains else None)
 
     def read_hooks(self, now):
-        """Notes from the office hook: one small file per session; day-old ones are tidied away."""
+        """Notes from the office hook: one small file per session and one per helper; day-old ones
+        are tidied away. Returns the transcripts a SessionStart note keeps in the room, even before
+        Claude Code has written to them."""
+        keep = set()
         try:
             files = [f for f in os.scandir(HOOKS_DIR) if f.name.endswith('.json')]
         except OSError:
-            return
+            return keep
+        key = lambda p: os.path.normcase(os.path.abspath(os.path.expanduser(str(p or ''))))
         with self.lock:
-            by_path = {os.path.normcase(os.path.abspath(p)): s for p, s in self.sessions.items()}
+            by_path = {key(p): s for p, s in self.sessions.items()}
         for f in files:
             try:
                 if now - f.stat().st_mtime > DAY:
@@ -688,10 +725,42 @@ class Tracker(threading.Thread):
                     note = json.load(fh)
             except (OSError, ValueError):
                 continue
-            s = by_path.get(os.path.normcase(os.path.abspath(str(note.get('transcript') or ''))))
-            if s:
+            event, at = note.get('event'), note.get('time', 0)
+            if event in ('SubagentStart', 'SubagentStop'):
+                # a helper's transcript sits in the session's folder: <session>/subagents/agent-<id>.jsonl
+                path = note.get('agent_transcript') or os.path.join(
+                    str(note.get('transcript') or '')[:-len('.jsonl')], 'subagents',
+                    'agent-' + str(note.get('agent_id') or '') + '.jsonl')
+                s = by_path.get(key(path))
+                if s and s.helper:
+                    with self.lock:
+                        if note.get('agent_type') and not s.label:
+                            s.label = note['agent_type']
+                        if event == 'SubagentStop':
+                            s.stopped = max(s.stopped, at)
+                        elif at > s.stopped:  # started again (a resumed helper)
+                            s.stopped = 0
+                continue
+            path = str(note.get('transcript') or '')
+            s = by_path.get(key(path))
+            if not s and event == 'SessionStart' and path.endswith('.jsonl') and now - at < ACTIVE_SECS:
+                # a new session comes in through the portal straight away, before its first message
                 with self.lock:
-                    s.hook = note
+                    s = self.sessions.setdefault(path, Session(path))
+                by_path[key(path)] = s
+            if not s:
+                continue
+            with self.lock:
+                s.hook = note
+                if event == 'SessionStart' and at > s.woke:
+                    s.woke, s.ended = at, 0
+                    s.mtime = max(s.mtime, at)
+                    s.model = s.model or note.get('model') or ''
+                elif event == 'SessionEnd':
+                    s.ended = at
+            if s.woke and now - s.woke < ACTIVE_SECS:
+                keep.add(s.path)
+        return keep
 
     def scan_helpers(self, main, now, loose=()):
         """Subagent transcripts live in a folder named after the session (older versions: beside it)."""

@@ -185,13 +185,24 @@ Then make the two desktop shortcuts, and if you like, add the office hooks:
 ```bash
 cd ~/.claude/skills/claude-office
 python3 install.py           # on Windows: python install.py
-python3 install.py --hooks   # optional: exact "needs you" and "done"
+python3 install.py --hooks   # optional: exact arrivals, "needs you", "done" and API errors
 ```
 
-The hooks make Claude Code tell the office the moment a session shows a permission prompt or
-finishes a turn. They are two tiny entries in `~/.claude/settings.json` (a backup is kept as
+The hooks make Claude Code tell the office the moment something happens, instead of the office
+working it out from the transcripts:
+
+- a session **starts or ends**: its Claude comes in or leaves through the portal straight away,
+  without waiting for the first message or for the idle timer, and a resumed session comes back in;
+- a session shows a **permission prompt** or **finishes a turn**;
+- a turn **stops on an API error** (rate limit, overloaded, out of credit, signed out): the Claude
+  goes to `FIX` and the card says what happened, instead of looking busy;
+- a **helper starts or finishes**: it gets its exact type and heads back to the portal the moment
+  it is done.
+
+They are a few small entries in `~/.claude/settings.json` (a backup is kept as
 `settings.json.office-backup`) that run `office-hook.py` only on those events; it writes one small
-file and costs no tokens. `install.py --uninstall-hooks` removes them and leaves your other
+file per session (and per helper) and costs no tokens. If you added the hooks before, run
+`install.py --hooks` again to pick up the new events. `install.py --uninstall-hooks` removes them and leaves your other
 settings as they were.
 
 | Shortcut | What it does |

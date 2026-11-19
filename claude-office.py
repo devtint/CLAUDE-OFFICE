@@ -36,6 +36,7 @@ def state(tracker):
         out = []
         for s in claudes:
             st, tool = s.status()
+            fail = s.failure() if st == 'error' else ''  # rate limit, overloaded, signed out (StopFailure hook)
             name, colour = pet.model_info(s.model or (s.parent.model if s.parent else ''))
             step = ''
             if s.recent:
@@ -48,8 +49,8 @@ def state(tracker):
                 'project': s.project,
                 'colour': colour,
                 'state': st,
-                'word': pet.STATE_WORDS.get(st, st),
-                'doing': pet.tool_word(tool) if tool else '',
+                'word': 'Stopped' if fail else pet.STATE_WORDS.get(st, st),
+                'doing': fail or (pet.tool_word(tool) if tool else ''),
                 'step': step,
                 'desc': s.desc,
                 'turn': pet.ago(now - s.turn_start) if s.turn_start and st in ('working', 'thinking', 'waiting') else '',

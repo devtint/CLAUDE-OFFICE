@@ -81,7 +81,8 @@ when the server stops; the side panel keeps its last picture.
   reads and saves the settings.
 - `tracker.py`: reads the transcripts (taken from the Claude Pet box so this skill stands alone).
 - `office-hook.py`: the optional Claude Code hook; `python install.py --hooks` adds it, `--uninstall-hooks`
-  removes it. With it, permission prompts and finished turns show in the room at once.
+  removes it. With it, sessions arriving and leaving, permission prompts, finished turns, API errors
+  and helpers finishing show in the room at once.
 - `open-office.pyw`: the launcher the shortcuts and the commands above use.
 - `install.py`: makes or removes the desktop shortcuts. Icons are in `icons/`.
 - `workspace.html`: the room (`/`), the only page.
