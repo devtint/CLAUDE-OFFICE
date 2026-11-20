@@ -75,7 +75,53 @@ def state(tracker):
             })
         today = day_numbers(tracker.sessions.values())
     return {'claudes': out, 'ready': tracker.ready, 'today': today, 'plant': plant(today),
-            'update': update_badge(), 'hooks': os.path.exists(pet.HOOKS_MARKER)}
+            'usage': usage(), 'update': update_badge(), 'hooks': os.path.exists(pet.HOOKS_MARKER)}
+
+
+USAGE_FILE = os.path.join(pet.HOME, '.claude', 'office-usage.json')
+_usage = {'at': None, 'data': None}
+
+
+def usage():
+    """The two hourglasses on the shelf: how much of the 5 hour window and of the week is used, and
+    when each one resets. The numbers come from office-statusline.py, which Claude Code hands them
+    to; without "install.py --statusline" there is no file and the hourglasses stay empty."""
+    try:
+        stamp = os.path.getmtime(USAGE_FILE)
+    except OSError:
+        _usage['at'], _usage['data'] = None, None
+        return None
+    if stamp != _usage['at']:
+        _usage['at'] = stamp
+        _usage['data'] = None
+        try:
+            with open(USAGE_FILE, encoding='utf-8') as fh:
+                raw = json.load(fh)
+        except (OSError, ValueError):
+            return None
+        out = {}
+        for key in ('five', 'seven'):
+            win = raw.get(key)
+            if not isinstance(win, dict):
+                continue
+            try:
+                pct = max(0.0, min(100.0, float(win['pct'])))
+            except (KeyError, TypeError, ValueError):
+                continue
+            resets = win.get('resets')
+            resets = int(resets) if isinstance(resets, (int, float)) and resets > 0 else None
+            out[key] = {'pct': round(pct, 1), 'resets': resets}
+        _usage['data'] = out or None
+    data = _usage['data']
+    if not data:
+        return None
+    now = time.time()
+    out = {'read': round(now - _usage['at'])}  # how long ago a session last reported, for the card
+    for key, win in data.items():
+        reset = win['resets']
+        fresh = reset is not None and reset <= now  # the window turned over while nobody was working
+        out[key] = {'pct': 0.0 if fresh else win['pct'], 'resets': None if fresh else reset}
+    return out
 
 
 PLANT_FILE = os.path.join(pet.HOME, '.claude', 'office-plant.json')

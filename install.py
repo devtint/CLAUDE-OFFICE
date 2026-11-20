@@ -4,6 +4,8 @@
 #   python install.py --uninstall   remove them (and the full screen window's browser profile)
 #   python install.py --hooks       add the office hooks to Claude Code (exact "needs you" and "done")
 #   python install.py --uninstall-hooks   remove the hooks again
+#   python install.py --statusline  let the office read your plan limits (the hourglasses on the shelf)
+#   python install.py --uninstall-statusline   put your old status line back
 # Run it again after moving this folder.
 import json
 import os
@@ -175,9 +177,79 @@ def set_hooks(add):
         print('removed the office hooks from', SETTINGS)
 
 
+# ---------- Claude Code status line ----------
+# The status line is the only place on this computer where the plan limits appear, so the two
+# hourglasses on the shelf come from here. The office script writes the numbers to
+# ~/.claude/office-usage.json and then runs whatever status line was in the slot before, so the line
+# at your prompt stays exactly as you had it. That old command is kept in
+# ~/.claude/office-statusline.json and put back by --uninstall-statusline.
+
+LINE_SCRIPT = os.path.join(HERE, 'office-statusline.py')
+CHAIN_FILE = os.path.join(os.path.expanduser('~'), '.claude', 'office-statusline.json')
+
+
+def line_command():
+    return f'"{sys.executable}" "{LINE_SCRIPT}"'
+
+
+def set_statusline(add):
+    """Puts the office in (or out of) the statusLine slot in ~/.claude/settings.json, keeping the
+    status line that was there and running it from the office script."""
+    settings = {}
+    if os.path.exists(SETTINGS):
+        try:
+            with open(SETTINGS, encoding='utf-8') as fh:
+                settings = json.load(fh)
+        except ValueError:
+            print('could not read', SETTINGS, '(it is not valid JSON), so it was left unchanged')
+            return
+        backup = SETTINGS + '.office-backup'
+        if add and not os.path.exists(backup):
+            shutil.copy2(SETTINGS, backup)
+    current = settings.get('statusLine') or {}
+    mine = 'office-statusline.py' in str(current.get('command', ''))
+
+    if add:
+        if not mine:  # remember the status line that was there, so it still prints at your prompt
+            keep = current.get('command') if current.get('type') == 'command' else None
+            os.makedirs(os.path.dirname(CHAIN_FILE), exist_ok=True)
+            with open(CHAIN_FILE, 'w', encoding='utf-8') as fh:
+                json.dump({'chain': keep} if keep else {}, fh, indent=1)
+        settings['statusLine'] = {'type': 'command', 'command': line_command()}
+    else:
+        if not mine:
+            print('the office is not in the status line, so nothing changed')
+            return
+        kept = None
+        try:
+            with open(CHAIN_FILE, encoding='utf-8') as fh:
+                kept = json.load(fh).get('chain')
+        except (OSError, ValueError, AttributeError):
+            pass
+        if kept:
+            settings['statusLine'] = {'type': 'command', 'command': kept}
+        else:
+            settings.pop('statusLine', None)
+        if os.path.exists(CHAIN_FILE):
+            os.remove(CHAIN_FILE)
+
+    os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
+    with open(SETTINGS + '.tmp', 'w', encoding='utf-8') as fh:
+        json.dump(settings, fh, indent=2)
+    os.replace(SETTINGS + '.tmp', SETTINGS)
+    if add:
+        print('the office now reads your plan limits from the status line in', SETTINGS)
+        print('new sessions pick it up at once; sessions already open show it after their next turn')
+    else:
+        print('put your status line back in', SETTINGS)
+
+
 def main():
     if '--hooks' in sys.argv or '--uninstall-hooks' in sys.argv:
         set_hooks('--hooks' in sys.argv)
+        return
+    if '--statusline' in sys.argv or '--uninstall-statusline' in sys.argv:
+        set_statusline('--statusline' in sys.argv)
         return
     remove = '--uninstall' in sys.argv
     folder = desktop()

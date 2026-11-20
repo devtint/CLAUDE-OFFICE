@@ -47,6 +47,12 @@ Works on **Windows, macOS and Linux**. It needs only Python 3.8+, with no packag
   `~/.claude/office-plant.json`. The settings choose which plant it is — a leafy plant, a cactus
   that grows arms, or an aloe — and that is only a change of look: the points, the stage and the
   height stay exactly as they were, so swapping plants never costs you any growth.
+- **Two hourglasses** on the shelf, between the books and the radio, are your plan limits: the small
+  one is the 5 hour session window, the big one is the week. The sand that has run down is what you
+  have used, so a full top bulb is a window that has just reset; the sand darkens past 60% and goes
+  red past 85%. Tap either one for the exact percentages and when each resets. Claude Code only gives these
+  numbers to a status line, so they arrive through `install.py --statusline` (below); until then both
+  glasses stand empty.
 - **Tests, commits and pushes:** a computer's light turns green when its session's tests pass and
   blinks amber when they fail, and the Claude cheers or winces. A push sends the Claude to the
   portal with a parcel ("SENT"). The CODE screen shows the file and the lines changed (+12 -3).
@@ -110,11 +116,14 @@ https://github.com/devtint/CLAUDE-OFFICE
    doing anything that would discard them. Otherwise run "git pull".
    If the folder is not a git clone, tell me and offer to replace it with a fresh clone.
 3. Tell me in a few lines what changed, from "git log --oneline -5" and README.md.
-4. Read install.py and office-hook.py, then ask me whether to add the optional office hooks.
-   They make the office show permission prompts and finished turns immediately, run only on
-   those events and cost no tokens. If I say yes, run install.py with --hooks using Python
-   (python3 on macOS and Linux, python on Windows). Tell me "install.py --uninstall-hooks"
-   removes them.
+4. Read install.py, office-hook.py and office-statusline.py, then ask me two things.
+   First, whether to add the optional office hooks. They make the office show permission prompts
+   and finished turns immediately, run only on those events and cost no tokens. If I say yes, run
+   install.py with --hooks using Python (python3 on macOS and Linux, python on Windows). Tell me
+   "install.py --uninstall-hooks" removes them.
+   Second, whether to add the status line that fills the two hourglasses on the shelf, with
+   install.py --statusline. It keeps the status line I already have and runs it from the office
+   script, so my prompt looks the same, and "install.py --uninstall-statusline" puts it back.
 5. If I use the desktop shortcuts, run install.py again (without --hooks) to refresh them.
 6. Restart the office: run open-office.pyw with --stop, wait a moment, then run it again
    with --server.
@@ -186,6 +195,7 @@ Then make the two desktop shortcuts, and if you like, add the office hooks:
 cd ~/.claude/skills/claude-office
 python3 install.py           # on Windows: python install.py
 python3 install.py --hooks   # optional: exact arrivals, "needs you", "done" and API errors
+python3 install.py --statusline   # optional: the plan limits in the two hourglasses
 ```
 
 The hooks make Claude Code tell the office the moment something happens, instead of the office
@@ -204,6 +214,13 @@ They are a few small entries in `~/.claude/settings.json` (a backup is kept as
 file per session (and per helper) and costs no tokens. If you added the hooks before, run
 `install.py --hooks` again to pick up the new events. `install.py --uninstall-hooks` removes them and leaves your other
 settings as they were.
+
+The status line is the only place on your computer where Claude Code says how much of your 5 hour
+window and of your week is used, so the hourglasses need `install.py --statusline`. It puts
+`office-statusline.py` in the `statusLine` slot of `~/.claude/settings.json` (same backup), which
+writes the four numbers to `~/.claude/office-usage.json` and then runs whatever status line you
+already had, so the line at your prompt looks exactly as it did. Nothing is sent anywhere.
+`install.py --uninstall-statusline` puts your own command back.
 
 | Shortcut | What it does |
 |---|---|
@@ -275,6 +292,7 @@ Tap the **Raspberry Pi** on the shelf, the little box with a gear on it. Changes
 | Cat | Orange tabby, Tuxedo or Calico |
 | Claudes | Little Claudes or Ghosts. Ghosts keep the model colours, the antenna and everything they do — they just hover, ripple at the hem and let the room show through. `?claudes=ghost` previews them without saving it |
 | Plant | Leafy plant, Cactus or Aloe. The growth lives apart from this (in `~/.claude/office-plant.json`), so changing the plant keeps the same points, the same stage and the same height. `?plant=cactus` previews one without saving it |
+| Limit hourglasses | The two sand clocks on the shelf: your 5 hour window and your week, or hidden |
 | Show subagents | Helpers as small Claudes, or hidden |
 | Check for updates | Once a day the office asks GitHub whether a newer version exists, sending only the commit id it is on. When there is one, the Raspberry Pi blinks NEW and the settings show what changed with a button to copy the update prompt. Turn it off here |
 | Ambient sound | Off by default. Rain when it rains in your city (and thunder in storms), soft key clicks while a Claude types, purring when the cat is petted, a meow when it opens the portal. Browsers only play sound after you tap the page once, and it pauses while the page is hidden |
